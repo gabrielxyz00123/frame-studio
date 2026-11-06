@@ -41,3 +41,21 @@ label,.muted,.secondary,.drop span,.drop b,.file-row,#file-list,.test-panel p,.n
 #toast.error{background:#f3d38a;color:#2a2210}
 #toast-close{background:none;border:0;color:inherit;font-size:22px;min-width:36px;min-height:36px;line-height:1}
 @media(max-width:700px){nav button,nav button span{font-size:12px}.flow small{font-size:11px}footer{font-size:11px}}
+
+/* Configuração do lote simplificada */
+.step{padding:22px 0;border-top:1px solid var(--line)}.step:first-of-type{border-top:0;padding-top:4px}
+.step-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}.step-head h3{font:700 16px Manrope;margin:0;letter-spacing:-.2px}
+.step-num{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-weight:700;font-size:13px;flex-shrink:0}
+.step label{margin:14px 0 8px}
+.field-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.field-grid label{margin-top:0}
+.hint{display:block;margin-top:6px;font-size:12px;color:var(--n6)}
+.tag{font-size:11px;background:var(--tint-2);color:var(--n8);padding:2px 8px;border-radius:20px;margin-left:4px}
+.trim-panel:has(#trim-on:not(:checked)) .trim-fields{display:none}
+.advanced{margin-top:6px;padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--n2)}
+.advanced summary{cursor:pointer;color:var(--n8);font-weight:600;font-size:14px;min-height:28px}
+.advanced summary span{font-weight:400;color:var(--n6);font-size:12px;margin-left:8px}
+.advanced[open] summary{margin-bottom:6px}
+.test-panel h2{margin-bottom:6px}.test-panel .row-actions{flex-wrap:wrap;margin:12px 0 4px}.test-panel .row-actions .primary{margin-top:0;min-width:180px}
+.summary dl{margin:18px 0}
+@media(max-width:900px){.field-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
