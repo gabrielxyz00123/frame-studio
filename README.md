@@ -53,7 +53,7 @@ A origem da API é `https://api.higgsfield.ai`. Chamadas em `api/higgsfield.js`:
 - `public/trim.js`: `trimVideo()` cria um `AudioContext`, conecta o áudio do elemento de vídeo a `createMediaStreamDestination()` e inclui essas faixas no `MediaStream` gravado. O MP4 recortado usa AAC a 128 kbit/s quando o navegador suporta essa combinação. O áudio da origem não é reproduzido nas caixas durante o corte.
 - `public/generation.js`: o plano define `generateAudio: true` e envia essa opção ao servidor.
 - `api/higgsfield.js`: converte a opção para **`generate_audio`** no pedido ao Wan. Também contém `referenceAudio()`: quando o registro da mídia tem `audioPath`, lê um WAV privado (até 15 MB), envia pela API de arquivos da Higgsfield e inclui `audio_urls` com instruções de fala. O fluxo atual de upload da interface não cria esse WAV automaticamente; portanto esse caminho depende de uma mídia previamente preparada com `audioPath`.
-- O áudio final é produzido pelo provedor dentro do MP4. **Não há uma etapa de extrair e recolocar o áudio original no vídeo final**, nem garantia de preservação idêntica da voz ou sincronização perfeita. Para mudar isso, esses são os pontos a alterar.
+- **Áudio original no vídeo final:** ao arquivar cada saída (`action=archive`), o servidor baixa o vídeo gerado e o vídeo de origem (o trecho já cortado) e usa `ffmpeg-static` para trocar a faixa de áudio pela original, sem recodificar a imagem (`-c:v copy`, áudio AAC 192 kbit/s, duração igual à do vídeo gerado). Se a troca falhar, o vídeo é guardado com o áudio do provedor e a resposta traz `audioReplaced:false`.
 
 ## Variáveis de ambiente
 

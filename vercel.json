@@ -22,7 +22,8 @@
   ],
   "functions": {
     "api/higgsfield.js": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
     }
   },
   "buildCommand": "npm run build"

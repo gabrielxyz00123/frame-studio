@@ -13,6 +13,19 @@ async function db(path,token,options={}){const r=await fetch(SUPABASE+path,{...o
 async function ownedRecord(id,kind,user,token){if(!idPattern.test(id||''))throw error(400,'Referência inválida.');const rows=await db(`/rest/v1/frame_library?id=eq.${id}&owner_id=eq.${user.id}&kind=eq.${kind}&deleted=eq.false&select=data`,token);if(!rows.length)throw error(404,'Referência não encontrada na sua biblioteca.');return rows[0].data}
 async function signedMedia(path,user,token){if(typeof path!=='string'||!path.startsWith(user.id+'/')||path.includes('..'))throw error(400,'Arquivo inválido.');const result=await db('/storage/v1/object/sign/frame-private/'+path.split('/').map(encodeURIComponent).join('/'),token,{method:'POST',body:JSON.stringify({expiresIn:7200})});if(!result.signedURL)throw error(502,'Não foi possível preparar a referência.');const url=new URL(result.signedURL.startsWith('/object/')?'/storage/v1'+result.signedURL:result.signedURL,SUPABASE+'/storage/v1/');if(url.origin!==SUPABASE)throw error(502,'Endereço de referência inválido.');return url.href}
 async function referenceAudio(media,user,token,key){const src=await signedMedia(media.audioPath,user,token);const got=await fetch(src,{redirect:'error',signal:AbortSignal.timeout(20000)});if(!got.ok)throw error(502,'Não foi possível ler o áudio de referência.');const bytes=Buffer.from(await got.arrayBuffer());if(bytes.length<1000||bytes.length>15*1048576||bytes.toString('latin1',0,4)!=='RIFF')throw error(400,'Áudio de referência inválido.');const up=await fetch(HF+'/files/generate-upload-url',{method:'POST',headers:{Authorization:'Key '+key,'Content-Type':'application/json'},body:JSON.stringify({content_type:'audio/wav'}),redirect:'error',signal:AbortSignal.timeout(15000)});if(!up.ok)throw error(502,'A Higgsfield não preparou o envio do áudio.');const slot=await up.json();if(!slot.upload_url||!slot.public_url)throw error(502,'Resposta inesperada da Higgsfield ao enviar o áudio.');const put=await fetch(slot.upload_url,{method:'PUT',headers:{...(slot.upload_headers||{'Content-Type':'audio/wav'})},body:bytes,redirect:'error',signal:AbortSignal.timeout(30000)});if(!put.ok)throw error(502,'Não foi possível enviar o áudio para a Higgsfield.');return slot.public_url}
+/* Troca o áudio do vídeo gerado pelo áudio original do vídeo de origem (mesmo trecho), sem recodificar a imagem. */
+async function originalAudio(generated,source){
+ if(!source.length||source.length>50*1048576)return null;
+ const {default:ffmpeg}=await import('ffmpeg-static');const {spawn}=await import('node:child_process');const {writeFile,readFile,rm,mkdtemp}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const dir=await mkdtemp(join(tmpdir(),'fs-'));const g=join(dir,'g.mp4'),o=join(dir,'o.mp4'),f=join(dir,'f.mp4');
+ try{await writeFile(g,generated);await writeFile(o,source);
+  const run=args=>new Promise(resolve=>{let err='';const p=spawn(ffmpeg,args);p.stderr.on('data',d=>{if(err.length<20000)err+=d});const t=setTimeout(()=>p.kill('SIGKILL'),25000);p.on('close',c=>{clearTimeout(t);resolve({code:c,err})});p.on('error',()=>{clearTimeout(t);resolve({code:-1,err})});});
+  const info=(await run(['-hide_banner','-i',g])).err.match(/Duration: (\d+):(\d+):([\d.]+)/);if(!info)return null;
+  const seconds=(+info[1])*3600+(+info[2])*60+(+info[3]);if(!(seconds>0&&seconds<=60))return null;
+  const {code}=await run(['-v','error','-y','-i',g,'-i',o,'-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-af','apad','-t',seconds.toFixed(3),'-movflags','+faststart',f]);
+  if(code!==0)return null;const out=await readFile(f);return out.length>1000?out:null;
+ }finally{await rm(dir,{recursive:true,force:true}).catch(()=>{});}
+}
 async function requestStatus(body,key,user){
  if(!idPattern.test(body.requestId||'')||!validTicket(key,user.id,body.requestId,body.ticket))throw error(403,'Esse pedido não pertence à sua conta.');
  let url;try{url=new URL(body.statusUrl||'')}catch{throw error(400,'Endereço de acompanhamento inválido.')}
@@ -83,16 +96,17 @@ if(['submit','estimate'].includes(action)&&req.method==='POST'){
 if(action==='archive'&&req.method==='POST'){
  const result=await requestStatus(body,key,user);if(result.status!=='completed'||typeof result.video?.url!=='string'||!result.video.url.startsWith('https://'))throw error(409,'O vídeo ainda não está pronto para baixar.');
  const path=user.id+'/generated/'+body.requestId+'.mp4',objectPath=path.split('/').map(encodeURIComponent).join('/');
- let existingUrl=null;try{existingUrl=await signedMedia(path,user,token);}catch{}
+ let existingUrl=null,audioReplaced=false;try{existingUrl=await signedMedia(path,user,token);}catch{}
  if(!existingUrl){
-  const video=await fetch(result.video.url,{signal:AbortSignal.timeout(20000)});if(!video.ok||!video.body)throw error(502,'Não foi possível obter o vídeo gerado.');
+  const video=await fetch(result.video.url,{signal:AbortSignal.timeout(20000)});if(!video.ok)throw error(502,'Não foi possível obter o vídeo gerado.');
   if(Number(video.headers.get('content-length')||0)>50*1048576)throw error(413,'O vídeo ultrapassa 50 MB. Abra o resultado original para baixar.');
-  let size=0;const stream=video.body.pipeThrough(new TransformStream({transform(chunk,controller){size+=chunk.byteLength;if(size>50*1048576)throw error(413,'Vídeo maior que 50 MB.');controller.enqueue(chunk);}}));
-  const saved=await fetch(SUPABASE+'/storage/v1/object/frame-private/'+objectPath,{method:'POST',headers:{apikey:PUBLIC_KEY,Authorization:token,'Content-Type':'video/mp4','x-upsert':'false'},body:stream,duplex:'half',signal:AbortSignal.timeout(45000)});
+  let bytes=Buffer.from(await video.arrayBuffer());if(bytes.length>50*1048576)throw error(413,'Vídeo maior que 50 MB.');
+  if(body.mediaId){try{const media=await ownedRecord(body.mediaId,'media',user,token);const src=await fetch(await signedMedia(media.path,user,token),{redirect:'error',signal:AbortSignal.timeout(15000)});if(src.ok){const mixed=await originalAudio(bytes,Buffer.from(await src.arrayBuffer()));if(mixed){bytes=mixed;audioReplaced=true;}}}catch(e){console.warn('Áudio original não aplicado:',e.message);}}
+  const saved=await fetch(SUPABASE+'/storage/v1/object/frame-private/'+objectPath,{method:'POST',headers:{apikey:PUBLIC_KEY,Authorization:token,'Content-Type':'video/mp4','x-upsert':'false'},body:new Blob([bytes]).stream(),duplex:'half',signal:AbortSignal.timeout(30000)});
   if(!saved.ok&&saved.status!==409)throw error(502,'O vídeo foi gerado, mas não foi possível guardar a cópia privada. Use Abrir original.');
  }
  const videoUrl=existingUrl||await signedMedia(path,user,token),downloadUrl=new URL(videoUrl);downloadUrl.searchParams.set('download','frame-studio-'+body.requestId.slice(0,8)+'.mp4');
- return res.status(200).json({videoPath:path,videoUrl,downloadUrl:downloadUrl.href});
+ return res.status(200).json({videoPath:path,videoUrl,downloadUrl:downloadUrl.href,audioReplaced});
 }
 if(action==='status'&&req.method==='POST'){
  const result=await requestStatus(body,key,user),videoUrl=typeof result.video?.url==='string'&&result.video.url.startsWith('https://')?result.video.url:null;
