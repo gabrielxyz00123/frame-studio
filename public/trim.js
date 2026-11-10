@@ -25,6 +25,36 @@
     });
   }
 
+  /* Cobertura da legenda: borra a faixa [top,bottom] (frações da altura) */
+  window.drawCaptionBand = function (c2, v, cw, ch, top, bottom) {
+    c2.filter = 'none';
+    c2.drawImage(v, 0, 0, cw, ch);
+    const y = Math.max(0, Math.round(top * ch)), h = Math.min(ch - y, Math.round((bottom - top) * ch));
+    if (h <= 0) return;
+    const tiny = window.__capTiny || (window.__capTiny = document.createElement('canvas'));
+    const sw = Math.max(8, Math.round(cw / 24)), sh = Math.max(4, Math.round(h / 24));
+    tiny.width = sw; tiny.height = sh;
+    const t = tiny.getContext('2d');
+    t.imageSmoothingEnabled = true; t.imageSmoothingQuality = 'high';
+    t.drawImage(v, 0, y, cw, h, 0, 0, sw, sh);
+    c2.save();
+    c2.beginPath(); c2.rect(0, y, cw, h); c2.clip();
+    c2.imageSmoothingEnabled = true; c2.imageSmoothingQuality = 'high';
+    c2.drawImage(tiny, 0, 0, sw, sh, 0, y, cw, h);
+    c2.filter = 'blur(' + Math.max(4, Math.round(cw / 40)) + 'px)';
+    c2.drawImage(tiny, 0, 0, sw, sh, 0, y, cw, h);
+    c2.restore();
+    c2.filter = 'none';
+  };
+  function bandSettings() {
+    const on = !!document.getElementById('blur-on')?.checked;
+    let top = Number(document.getElementById('blur-top')?.value) / 100, bottom = Number(document.getElementById('blur-bottom')?.value) / 100;
+    if (!(top >= 0)) top = 0.72;
+    if (!(bottom > top)) bottom = Math.min(1, top + 0.2);
+    return { on, top, bottom };
+  }
+  window.captionBandSettings = bandSettings;
+
   window.trimSupported = () => !!pickMime();
 
   /* trimVideo(file, startSeconds, lengthSeconds, onProgress?, options?) -> Promise<Blob>
@@ -43,7 +73,7 @@
     v.playsInline = true;
     document.body.append(v);
 
-    let ctx = null, recorder = null, tracks = [];
+    let ctx = null, recorder = null, tracks = [], stopDraw = null;
     try {
       v.src = url;
       await waitFor(v, 'loadedmetadata', 15000, 'Não foi possível ler o vídeo para cortar.');
@@ -58,8 +88,24 @@
       if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
       const dest = ctx.createMediaStreamDestination();
       ctx.createMediaElementSource(v).connect(dest); // áudio vai só para a gravação, sem tocar nas caixas de som
-      const capture = v.captureStream ? v.captureStream() : v.mozCaptureStream();
-      const stream = new MediaStream([...capture.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+      const band = bandSettings();
+      let videoTracks;
+      if (band.on && v.videoWidth) {
+        const cw = v.videoWidth, ch = v.videoHeight;
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        const c2 = cv.getContext('2d');
+        let alive = true, handle = 0;
+        const paint = () => { if (!alive) return; try { window.drawCaptionBand(c2, v, cw, ch, band.top, band.bottom); } catch {} schedule(); };
+        const schedule = () => { handle = v.requestVideoFrameCallback ? v.requestVideoFrameCallback(paint) : requestAnimationFrame(paint); };
+        window.drawCaptionBand(c2, v, cw, ch, band.top, band.bottom);
+        schedule();
+        stopDraw = () => { alive = false; try { if (v.cancelVideoFrameCallback) v.cancelVideoFrameCallback(handle); else cancelAnimationFrame(handle); } catch {} };
+        videoTracks = cv.captureStream(30).getVideoTracks();
+      } else {
+        const capture = v.captureStream ? v.captureStream() : v.mozCaptureStream();
+        videoTracks = capture.getVideoTracks();
+      }
+      const stream = new MediaStream([...videoTracks, ...dest.stream.getAudioTracks()]);
       tracks = stream.getTracks();
       if (!stream.getVideoTracks().length) throw Error('O vídeo não tem imagem para cortar.');
 
@@ -96,6 +142,7 @@
       if (blob.size > MAX_OUTPUT_BYTES) throw Error('O trecho cortado passou de 50 MB. Use um trecho menor.');
       return blob;
     } finally {
+      try { if (stopDraw) stopDraw(); } catch {}
       try { if (recorder && recorder.state !== 'inactive') recorder.stop(); } catch {}
       tracks.forEach(t => { try { t.stop(); } catch {} });
       try { if (ctx) await ctx.close(); } catch {}
@@ -107,3 +154,5 @@
     }
   };
 })();
+/* carrega a opção de cobrir legenda */
+(function(){var s=document.createElement('script');s.src='caption.js';document.head.append(s);})();

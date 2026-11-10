@@ -1,0 +1,1 @@
+window.FRAME_CONFIG={url:'https://hwhkseomjxoqjrylmqaz.supabase.co',publishableKey:'sb_publishable_oJvYE2n7-MjHwTwzN668mQ_orC-JqwJ'};
