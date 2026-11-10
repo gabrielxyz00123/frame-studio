@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import handler from '../api/higgsfield.js';
 import worker from '../api/worker.js';
 const root=fileURLToPath(new URL('../public/',import.meta.url));
-const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};
+const types={'.mjs':'text/javascript; charset=utf-8','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};
 const port=Number(process.env.PORT||3000);
 createServer(async(req,res)=>{try{
  const url=new URL(req.url,'http://localhost');

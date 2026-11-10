@@ -16,7 +16,7 @@ createServer(async (req, res) => {
     let body = await readFile(path, 'utf8');
     if (extname(path) === '.html') body = body.replace('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.102.0/dist/umd/supabase.js', '/__fixture.js');
     if (extname(path) === '.css') body = body.replace(/^@import[^;]+;/, '');
-    res.setHeader('Content-Type', { '.js': 'text/javascript', '.html': 'text/html; charset=utf-8', '.css': 'text/css' }[extname(path)] || 'text/plain');
+    res.setHeader('Content-Type', { '.mjs': 'text/javascript', '.js': 'text/javascript', '.html': 'text/html; charset=utf-8', '.css': 'text/css' }[extname(path)] || 'text/plain');
     res.setHeader('Cache-Control', 'no-store'); res.end(body);
   } catch { res.statusCode = 404; res.end(); }
 }).listen(4319, '127.0.0.1', () => console.log('Fixture preview: http://127.0.0.1:4319 (fake data only)'));
