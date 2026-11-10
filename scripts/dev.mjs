@@ -4,16 +4,17 @@ import {readFile} from 'node:fs/promises';
 import {resolve,extname,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import handler from '../api/higgsfield.js';
+import worker from '../api/worker.js';
 const root=fileURLToPath(new URL('../public/',import.meta.url));
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.png':'image/png','.svg':'image/svg+xml'};
 const port=Number(process.env.PORT||3000);
 createServer(async(req,res)=>{try{
  const url=new URL(req.url,'http://localhost');
- if(url.pathname==='/api/higgsfield'){
+ if(url.pathname==='/api/higgsfield'||url.pathname==='/api/worker'){
   let data='',size=0;for await(const chunk of req){size+=chunk.length;if(size>1048576){res.writeHead(413);res.end('Requisição muito grande.');return;}data+=chunk;}
   req.body=data?JSON.parse(data):undefined;req.query=Object.fromEntries(url.searchParams);
   res.status=code=>{res.statusCode=code;return res;};res.json=value=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));return res;};
-  await handler(req,res);return;
+  await (url.pathname==='/api/worker'?worker:handler)(req,res);return;
  }
  const requested=decodeURIComponent(url.pathname)==='/'?'index.html':decodeURIComponent(url.pathname).replace(/^\/+/,''),path=resolve(root,requested);
  if(!path.startsWith(resolve(root)+sep)){res.writeHead(403);res.end();return;}
