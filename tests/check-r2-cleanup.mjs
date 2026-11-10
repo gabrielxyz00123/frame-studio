@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {parseList,listR2,removeR2} from '../lib/r2-cleanup.mjs';
+const xml='<ListBucketResult xmlns="urn:test"><IsTruncated>false</IsTruncated><Contents><Key>owner%2Fold.wav</Key><LastModified>2020-01-01T00:00:00Z</LastModified><Size>123</Size></Contents><Contents><Key>other%2Fsecret.mp4</Key><LastModified>2020-01-01T00:00:00Z</LastModified><Size>456</Size></Contents></ListBucketResult>';
+const page=parseList(xml,'owner');assert.equal(page.objects.length,1);assert.equal(page.objects[0].path,'owner/old.wav');assert.equal(page.objects[0].store,'r2');
+assert.throws(()=>parseList('<Error>AccessDenied</Error>','owner'));assert.throws(()=>parseList('<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>','owner'));
+Object.assign(process.env,{R2_ACCOUNT_ID:'fixture',R2_ACCESS_KEY_ID:'fixture-id',R2_SECRET_ACCESS_KEY:'fixture-secret',R2_BUCKET:'fixture-bucket'});
+let deleted=0;
+globalThis.fetch=async(url,options={})=>{const parsed=new URL(url);if(options.method==='DELETE'){assert.equal(parsed.pathname,'/fixture-bucket/owner/old.wav');deleted++;return new Response(null,{status:204});}assert.equal(parsed.searchParams.get('prefix'),'owner/');assert.equal(parsed.searchParams.get('list-type'),'2');return new Response(xml);};
+assert.equal((await listR2('owner')).length,1);await assert.rejects(removeR2('owner','other/secret.mp4'),/inválido/);assert.equal(deleted,0);await removeR2('owner','owner/old.wav');assert.equal(deleted,1);
+console.log('PASS: R2 orphan listing is owner-prefixed, rejects incomplete/error responses, decodes keys and cannot delete another account path.');
