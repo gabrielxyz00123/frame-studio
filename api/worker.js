@@ -1,3 +1,4 @@
+import {validateCast,validatePhotos,assertReviewed,frameIdentityRule,videoIdentityRule,multiIdentityRule} from '../public/identity-policy.mjs';
 /* Fila no servidor: roda a cada minuto (chamado por um agendador externo) e avanca os lotes marcados com serverQueue.
    Fica desligada enquanto SUPABASE_SERVICE_KEY e CRON_SECRET nao existirem. Cada acao usa so os dados do dono do lote. */
 import {createHmac,timingSafeEqual,createDecipheriv,randomUUID} from 'node:crypto';
@@ -107,24 +108,24 @@ function failMessage(r){
 function promptText(value,label,required=false){const t=typeof value==='string'?value.trim():'';if(t.length>20000||(required&&!t))throw error(400,'Preencha '+label+' com ate 20.000 caracteres.');return t;}
 
 /* ---------- montagem dos pedidos (mesma logica de api/higgsfield.js) ---------- */
-async function buildFrameEdit(owner,b,s,cast,target,modelId){
+export async function buildFrameEdit(owner,b,s,cast,target,modelId){
   const frame=await ownedRecord(owner,s.originalFrameId,'media');
   if(!IMG_TYPES.includes(frame.type))throw error(400,'Primeiro quadro invalido.');
   let prompt,photoUrls=[];
   if(Array.isArray(cast)&&cast.length){
     if(cast.length>4)throw error(400,'Associe de 1 a 4 pessoas as modelos.');
-    const seen=new Set(),lines=[];
+    validateCast(cast);const castModels=[];const seen=new Set(),lines=[];
     for(const [i,person] of cast.entries()){
       const t=promptText(person.target,'a posicao de cada pessoa',true);
       if(t.length>200||seen.has(t.toLowerCase()))throw error(400,'Identifique cada pessoa de forma distinta.');seen.add(t.toLowerCase());
-      const m=await ownedRecord(owner,person.modelId,'model');photoUrls.push(await signedMedia(owner,m.photoPath));
+      const m=await ownedRecord(owner,person.modelId,'model');castModels.push(m);photoUrls.push(await signedMedia(owner,m.photoPath));
       lines.push(`Person ${i+1}: ${t}. Replace with the identity of Image ${i+2}: ${String(m.identity||'')}`);
     }
-    prompt=['Image 1 is the source scene frame. The other images are identity sheets, one per replacement person. Replace ONLY the people listed below in Image 1, each with the identity of its assigned image. Each sheet supplies only face, hair and skin; do not copy its outfit or layout. Never blend or exchange identities. Preserve pose, expression, framing, clothing, background, lighting, objects and every unlisted person. Natural skin texture on every replaced person: no tattoos, no marks copied from the original people, and no new tattoos anywhere. Remove text and reconstruct surfaces naturally. Output one photorealistic scene frame, not a collage.',...lines].join('\n');
+    validatePhotos(castModels);prompt=[multiIdentityRule(),'Image 1 is the source scene frame. The other images are identity sheets, one per replacement person. Replace ONLY the people listed below in Image 1, each with the identity of its assigned image. Each sheet supplies only face, hair and skin; do not copy its outfit or layout. Never blend or exchange identities. Preserve pose, expression, framing, clothing, background, lighting, objects and every unlisted person. Natural skin texture on every replaced person: no tattoos, no marks copied from the original people, and no new tattoos anywhere. Remove text and reconstruct surfaces naturally. Output one photorealistic scene frame, not a collage.',...lines].join('\n');
   }else{
     const model=await ownedRecord(owner,modelId,'model');
     prompt=promptText(b.editPrompt,'o prompt de edicao do quadro',true).replaceAll('{{identity}}',String(model.identity||'')).replaceAll('{{target}}',String(target||'the main person').slice(0,200));
-    photoUrls=[await signedMedia(owner,model.photoPath)];
+    prompt+='\n\n'+frameIdentityRule(target);photoUrls=[await signedMedia(owner,model.photoPath)];
   }
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';const oi=await outfitImage(owner,outfit);if(oi){photoUrls.push(oi);ref='The outfit is shown in Image '+(photoUrls.length+1)+'.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
@@ -132,7 +133,7 @@ async function buildFrameEdit(owner,b,s,cast,target,modelId){
   const frameRatio=['1:1','2:3','3:2','3:4','4:3','7:9','9:7','9:16','16:9','21:9'].includes(s.frameRatio)?s.frameRatio:'9:16';
   return {prompt,image_urls:[await signedMedia(owner,frame.path),...photoUrls],resolution:'1k',aspect_ratio:frameRatio,prompt_extend:false,enable_thinking:false};
 }
-async function buildVideo(owner,key,b,s,j,frameImageUrl){
+export async function buildVideo(owner,key,b,s,j,frameImageUrl){
   const smode=s.mode||b.mode,smodel=s.modelId||b.modelId,scast=s.cast||b.cast,starget=(s.target!=null&&s.mode)?s.target:b.target;
   if(!['direct','frame','multi'].includes(smode))throw error(422,'Fluxo invalido.');
   const duration=Number(s.out||b.duration),resolution=b.resolution,ratio=b.ratio;
@@ -142,18 +143,18 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
   let imageUrls=[],prompt;const base=promptText(b.basePrompt,'o prompt base');
   if(smode==='multi'){
     if(!Array.isArray(scast)||scast.length<1||scast.length>4)throw error(400,'Associe de 1 a 4 pessoas as modelos.');
-    const targets=new Set(),mapping=[],frameUrl=frameImageUrl||null;
-    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');}
+    validateCast(scast);const castModels=[];const targets=new Set(),mapping=[];let frameUrl=frameImageUrl||null;
+    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');frameUrl=await signedMedia(owner,f.path);}
     const off=frameUrl?1:0;
     for(const [i,person] of scast.entries()){
       const t=promptText(person.target,'a posicao de cada pessoa',true);
       if(t.length>200||targets.has(t.toLowerCase()))throw error(400,'Identifique cada pessoa de forma distinta.');targets.add(t.toLowerCase());
-      const model=await ownedRecord(owner,person.modelId,'model');imageUrls.push(await signedMedia(owner,model.photoPath));
+      const model=await ownedRecord(owner,person.modelId,'model');castModels.push(model);imageUrls.push(await signedMedia(owner,model.photoPath));
       mapping.push(`Person ${i+1}: ${t}. Replacement identity is @img${i+1+off}: ${String(model.identity||'')}`);
     }
     if(/\{\{identity\}\}|\{\{target\}\}/.test(base))throw error(400,'Prompt base invalido para varias pessoas.');
     prompt=[base,promptText(b.multiPrompt,'o prompt de multiplas pessoas',true),'CAST MAPPING — mandatory priority over conflicting single-person instructions. Apply each identity ONLY to its matched person. Never blend or exchange identities. Unlisted people remain unchanged.',...mapping,...(frameUrl?['FRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly and keep them consistent through the whole video; the other images are the same identities for reference. @vid1 defines motion, timing, clothing and scene. Replaced people must have no tattoos. Exact opening-frame reproduction is not required.']:[])].filter(Boolean).join('\n\n');
-    if(frameUrl)imageUrls=[frameUrl,...imageUrls];
+    validatePhotos(castModels);prompt+='\n\n'+multiIdentityRule();if(frameUrl)imageUrls=[frameUrl,...imageUrls];
   }else{
     const model=await ownedRecord(owner,smodel,'model'),identity=String(model.identity||''),target=String(starget||'the main person').slice(0,200);
     const flowPrompt=promptText(smode==='frame'?b.framePrompt:b.directPrompt,'o prompt do fluxo',true);
@@ -162,9 +163,9 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
       prompt+='\n\nFRAME REFERENCE PRIORITY: @img1 is an edited scene frame, not an identity sheet. Use its person identity and appearance as the visual reference; @vid1 defines motion, timing, clothing and scene. An edited frame IS supplied. This overrides any conflicting description of @img1 or absence of an edited frame above. Preserve the mapped identity throughout the video. Exact opening-frame reproduction is not required.';
       if(frameImageUrl)imageUrls=[frameImageUrl];
       else{const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Envie o primeiro quadro editado.');imageUrls=[await signedMedia(owner,f.path)];}
-    }else imageUrls=[await signedMedia(owner,model.photoPath)];
+    imageUrls.push(await signedMedia(owner,model.photoPath));prompt+='\n\n'+videoIdentityRule(target);
+     }else imageUrls=[await signedMedia(owner,model.photoPath)];
   }
-  if(smode==='multi'&&!frameImageUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');imageUrls=[await signedMedia(owner,f.path),...imageUrls];prompt+='\n\nFRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly.';}
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';if(frameImageUrl){ref='The outfit is already applied in @img1 (the edited frame). Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else{const oi=await outfitImage(owner,outfit);if(oi){imageUrls.push(oi);ref='The outfit is shown in @img'+imageUrls.length+'. Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else ref='Ignore the clothing seen in @vid1 and keep this outfit for the whole video.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
   if(smode==='frame'||smode==='multi')prompt+='\n\n'+NO_TEXT;
@@ -174,7 +175,8 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
     audioUrl=await referenceAudio(owner,key,media);
     prompt+='\n\nAUDIO: Audio 1 is the original soundtrack of @vid1 (it may be speech, music, ambient sound or a mix). Keep its exact timing. The output must start at the very first frame of @vid1 with the same framing, camera angle and pose, and follow @vid1 shot by shot until the end. Never add an intro, a new scene, a different angle or a person talking to the camera that is not in @vid1. Only if the person in @vid1 is actually speaking or singing, match the lips to Audio 1 word for word; otherwise keep the mouth natural. Do not invent, change, translate or add speech.';
   }
-  const input={prompt,image_urls:imageUrls,video_urls:[await signedMedia(owner,media.path)],duration,resolution,aspect_ratio:ratio,generate_audio:!!b.generateAudio,enable_thinking:false};
+  if(smode==='frame')prompt+='\n\n'+videoIdentityRule(starget);if(smode==='multi')prompt+='\n\n'+multiIdentityRule();
+  const input={prompt,image_urls:imageUrls,video_urls:[await signedMedia(owner,media.path)],duration,resolution,aspect_ratio:ratio,generate_audio:!!b.generateAudio,prompt_extend:false,enable_thinking:false};
   if(audioUrl)input.audio_urls=[audioUrl];
   return {input,smode};
 }
@@ -284,7 +286,7 @@ async function pollJob(ctx,j){
 }
 async function submitJob(ctx,j){
   const {b,owner,key}=ctx,s=b.sources[j.sourceIndex];
-  let frameImageUrl=null;
+  assertReviewed(b,s);let frameImageUrl=null;
   if(isFrameEdit(b,s)){
     const smode=s.mode||b.mode;
     let fj=j.frameJob&&j.frameJob.requestId?j.frameJob:(s.frameJob&&s.frameJob.requestId?s.frameJob:null);
@@ -337,6 +339,7 @@ async function runBatch(row,budget,persist){
   await Promise.all(jobs.filter(j=>j.status==='completed'&&j.requestId&&!j.videoPath&&j.videoUrl).map(async j=>{try{await archive(owner,j,b);}catch(e){j.archiveError=e.message;j.archiveTries=(j.archiveTries||0)+1;}}));
   /* 2) enviar novos, respeitando a simultaneidade */
   let inflight=jobs.filter(j=>!TERMINAL.includes(j.status)&&(j.requestId||(j.frameJob&&j.frameJob.requestId))).length;
+  try{for(const j of jobs)if(!TERMINAL.includes(j.status)&&!j.requestId)assertReviewed(b,b.sources[j.sourceIndex]);}catch(e){b.status='paused';b.productionStatus='Pausado: '+e.message;await ctx.persist();return 'paused';}
   const waiting=jobs.filter(j=>!TERMINAL.includes(j.status)&&!j.requestId);
   for(const j of waiting){
     if(['uncertain','submitting'].includes(j.status)||(['uncertain','submitting'].includes(j.frameJob?.status)&&!j.frameJob?.requestId)){j.status='uncertain';b.status='paused';b.productionStatus='Pedido sem confirmação. Confira Requests antes de reenviar.';await ctx.persist();return 'paused';}
@@ -351,7 +354,7 @@ async function runBatch(row,budget,persist){
       j.tries=0;
     }catch(e){
       if((j.status==='submitting'&&!j.requestId)||(j.frameJob?.status==='submitting'&&!j.frameJob?.requestId)){if(!e.status||e.status>=500){j.status='uncertain';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='uncertain';j.error='Envio sem confirmação. Confira Requests antes de reenviar.';b.status='paused';b.productionStatus=j.error;await ctx.persist();return 'paused';}j.status='prepared';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='prepared';}
-      if(e.status===402||e.status===401){b.status='paused';b.productionStatus='Pausado: '+e.message;note='paused';break;}
+      if(e.status===409||e.status===402||e.status===401){b.status='paused';b.productionStatus='Pausado: '+e.message;note='paused';break;}
       if(e.status===429){note='limite';break;}
       if(e.status&&e.status<500&&e.status!==429){j.status='failed';j.error=e.message;b.srvFails=(b.srvFails||0)+1;}
       else{j.tries++;j.pollError=e.message;if(j.tries>=3){j.status='failed';j.error='Falha ao enviar apos 3 tentativas: '+e.message;b.srvFails=(b.srvFails||0)+1;}}
