@@ -28,5 +28,5 @@ globalThis.fetch=async(url,options={})=>{
 reset();await runWorker();assert.equal(submissions,1);assert.equal(row.data.jobs[0].requestId,requestId);assert.ok(saves.some(data=>data.jobs[0].status==='submitting'));assert.ok(saves.some(data=>data.jobs[0].requestId===requestId));
 await runWorker();assert.equal(submissions,1,'known requests must be polled instead of resubmitted');
 reset();loss=true;await runWorker();assert.equal(submissions,1);assert.equal(row.data.jobs[0].status,'uncertain');assert.equal(row.data.status,'paused');await runWorker();assert.equal(submissions,1);
-reset('frame');await runWorker();assert.equal(submissions,1);assert.equal(row.data.jobs[0].frameJob.status,'uncertain');assert.equal(row.data.status,'paused');await runWorker();assert.equal(submissions,1);
-console.log('PASS: production worker persists video/frame state before billing, saves accepted request IDs, polls known requests and never retries ambiguous video or frame submissions.');
+reset('frame');await runWorker();assert.equal(submissions,0,'unreviewed legacy frames must not spend money');assert.equal(row.data.status,'paused');await runWorker();assert.equal(submissions,0);
+console.log('PASS: production worker persists video/frame state before billing, saves accepted request IDs, polls known requests and never retries ambiguous video submissions; unreviewed legacy frame batches are paused before billing.');
