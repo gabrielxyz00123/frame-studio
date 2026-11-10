@@ -105,7 +105,8 @@
         if(['uncertain','submitting'].indexOf(j.status)>=0&&!j.requestId)throw Error('Um pedido ficou sem confirmação de recebimento. Confira Requests na Higgsfield antes de reenviar.');
         var source=b.sources[j.sourceIndex],outfit=source.outfit||b.outfit;
         var smode=source.mode||b.mode,smodel=source.modelId||b.modelId,scast=source.cast||b.cast,starget=(source.target!=null&&source.mode)?source.target:b.target;
-        stage(i,'prepare');summary();
+        if(!j.requestId)window.fsIdentityPolicy.assertReviewed(b,source);stage(i,'prepare');summary();
+        if(smode==='multi'&&source.frameJob)j.frameJob=source.frameJob;
         if(smode==='frame'&&!source.frameMediaId&&(source.originalFrameId||source.frameJob)&&(source.mode||b.frameMethod==='auto')){stage(i,'frame');j.frameJob=await editSource({id:b.id,leaseToken:b.leaseToken,modelId:smodel,editPrompt:b.editPrompt,target:starget,outfit:outfit},source,save);}
         if(!j.requestId){
           var pk=Math.ceil(Number(source.duration)||0)+'|'+(source.out||b.duration)+'|'+b.resolution+'|'+smode+'|'+(outfit?'o':'');
@@ -127,7 +128,7 @@
           if(terminalStatuses.indexOf(r.status)<0)stage(i,r.status);
           summary();
         }));
-        if(j.status==='failed'&&!j.retried&&localStorage.getItem('fs-autoretry')!=='0'){
+        if(j.status==='failed'&&!j.retried&&b.autoRetry===true){
           j.retried=true;j.lastError=j.error||'';
           delete j.requestId;delete j.error;delete j.videoUrl;delete j.downloadUrl;
           j.attemptId=crypto.randomUUID();j.status='prepared';
