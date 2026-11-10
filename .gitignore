@@ -1,27 +1,7 @@
-# Local environment and credentials
+node_modules/
 .env*
 !.env.example
-.npmrc
-.git-credentials
-*.pem
-*.key
-secrets/
-credentials/
-# Dependencies and build/runtime files
-node_modules/
 .vercel/
-dist/
-build/
-out/
-.output/
-.cache/
-coverage/
 *.log
 *.zip
-# Generated public Supabase configuration
-public/config.js
-# Editor/OS files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+.npm-cache/
