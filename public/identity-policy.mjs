@@ -14,8 +14,10 @@ export function validateCast(cast){
 export function validatePhotos(models){const paths=models.map(m=>m.photoPath);if(new Set(paths).size!==paths.length)invalid('Duas pessoas usam a mesma foto de identidade. Corrija as referências antes de gerar.');}
 export function reviewKey(b,s){
  const mode=s.mode||b.mode;
- return JSON.stringify([REVIEW_VERSION,mode,s.mediaId||'',s.originalFrameId||'',s.frameMediaId||'',s.frameJob?.requestId||'',s.modelId||b.modelId||'',s.target??b.target??'',mode==='multi'?(s.cast||b.cast||[]).map(p=>[p.modelId,String(p.target||'').trim()]):[],b.editPrompt||'',s.outfit||b.outfit||null]);
+ const outfit=s.outfit||b.outfit;
+ return JSON.stringify([REVIEW_VERSION,mode,s.mediaId||'',s.originalFrameId||'',s.frameMediaId||'',s.frameJob?.requestId||'',s.modelId||b.modelId||'',s.target??b.target??'',mode==='multi'?castKey(s.cast||b.cast):[],b.editPrompt||'',outfit?[outfit.mediaId||'',outfit.text||'',outfit.prompt||'']:null]);
 }
+export function castKey(cast){return (cast||[]).map(p=>[p.modelId,String(p.target||'').trim()]);}
 export function assertReviewed(b,s){
  const mode=s.mode||b.mode;if(mode!=='frame'&&mode!=='multi')return;
  if(mode==='multi')validateCast(s.cast||b.cast);

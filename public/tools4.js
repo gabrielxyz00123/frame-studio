@@ -41,10 +41,10 @@
     var h=x<.38?'esquerda':(x>.62?'direita':'centro'),v=y<.38?'parte de cima':(y>.62?'parte de baixo':'meio');
     return 'a pessoa que está '+(h==='centro'?'no centro':'à '+h)+' do quadro, na '+v+' (a cerca de '+Math.round(x*100)+'% da largura e '+Math.round(y*100)+'% da altura)';
   }
-  function markPerson(file,done){
+  function markPerson(file,done,at){
     var url=URL.createObjectURL(file),v=document.createElement('video');
     v.muted=true;v.playsInline=true;v.preload='auto';v.src=url;
-    v.onloadeddata=function(){try{v.currentTime=0.1;}catch(e){}};
+    v.onloadeddata=function(){try{v.currentTime=Math.min(at==null?.001:at,Math.max(0,(v.duration||1)-.05));}catch(e){}};
     v.onseeked=function(){
       v.onseeked=null;
       var W=v.videoWidth,H=v.videoHeight,s=Math.min(1,900/Math.max(W,H));
@@ -356,14 +356,14 @@
       var r2=mk('div',null,'rowf'),ms=document.createElement('select'),tg=document.createElement('input'),mb2=mk('button','Marcar no vídeo','secondary fit');
       modelOptions(ms,it.modelId);ms.onchange=function(){it.modelId=ms.value;persist();renderQueue();};
       tg.maxLength=200;tg.value=it.target||'';tg.placeholder='Quem será substituído?';tg.oninput=function(){it.target=tg.value;persist();};
-      mb2.type='button';mb2.onclick=function(){if(!it.file)return say('Para marcar, escolha este vídeo de novo (a fila restaurada não guarda o arquivo).');markPerson(it.file,function(tx){it.target=tx;tg.value=tx;persist();});};
+      mb2.type='button';mb2.onclick=function(){if(!it.file)return say('Para marcar, escolha este vídeo de novo (a fila restaurada não guarda o arquivo).');markPerson(it.file,function(tx){it.target=tx;tg.value=tx;persist();renderQueue();},it.frameAt);};
       r2.append(ms,tg,mb2);row.append(r2);
       var r3=mk('div',null,'rowf');if(it.mode==='frame')r3.append(mk('span','Quadro seu (opcional)','lab'));
       var fi=document.createElement('input');fi.type='file';fi.accept=IMG.join(',');
       fi.onchange=async function(){
         var f=fi.files[0];if(!f)return;
         if(IMG.indexOf(f.type)<0||f.size>4*1048576){fi.value='';return say('O quadro deve ser PNG, JPEG ou WebP de até 4 MB.');}
-        try{setSt(it,'Enviando o quadro…');var m=await uploadMedia(f,f.name);it.frameMediaId=m.id;it.framePath=m.path;it.manualFrameApproved=null;it.frameName=f.name;it.auto=false;persist();refreshInfo(it);refreshCost();}
+        try{setSt(it,'Enviando o quadro…');var m=await uploadMedia(f,f.name);it.frameMediaId=m.id;it.framePath=m.path;it.manualFrameApproved=null;it.frameName=f.name;it.auto=false;persist();renderQueue();refreshInfo(it);refreshCost();}
         catch(e){say(e.message||'Não foi possível enviar o quadro.');refreshInfo(it);}
       };
       if(it.mode==='frame'){r3.append(fi);
@@ -613,7 +613,7 @@
       var it={id:crypto.randomUUID(),file:sp.file,name:sp.file.name,state:'pending',mode:sp.mode,modelId:sp.modelId||'',target:sp.target||'the main person',cast:sp.cast&&sp.cast.length?JSON.parse(JSON.stringify(sp.cast)):[{modelId:'',target:''}],auto:true,useFrame:sp.mode==='multi'?sp.useFrame!==false:false};
       if(sp.frameFile){
         it._framePending=true;it.auto=false;
-        uploadMedia(sp.frameFile,sp.frameFile.name).then(function(m){it.frameMediaId=m.id;it.frameName=sp.frameFile.name;it._framePending=false;persist();refreshInfo(it);refreshCost();})
+        uploadMedia(sp.frameFile,sp.frameFile.name).then(function(m){it.frameMediaId=m.id;it.framePath=m.path;it.manualFrameApproved=null;it.frameName=sp.frameFile.name;it._framePending=false;persist();renderQueue();refreshInfo(it);refreshCost();})
           .catch(function(e){it._framePending=false;it.auto=true;say((e&&e.message)||'Não foi possível enviar o quadro. Ele será editado automaticamente.');refreshInfo(it);});
       }
       queue.push(it);n++;
