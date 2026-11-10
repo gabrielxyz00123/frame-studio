@@ -16,6 +16,7 @@ const b={mode:'frame',modelId:modelA,target:'back-facing person at left',editPro
 const s={mode:'frame',mediaId:video,frameMediaId:frame};
 assert.throws(()=>assertReviewed(b,s),/Revisão/);
 s.identityReview={version:REVIEW_VERSION,key:reviewKey(b,s)};assertReviewed(b,s);
+assert.equal(reviewKey({...b,outfit:{text:'red',mediaId:'outfit',prompt:'wear'}},s),reviewKey({...b,outfit:{prompt:'wear',mediaId:'outfit',text:'red'}},s),'JSONB property order must not invalidate an approval');
 assert.throws(()=>assertReviewed({...b,target:'right person'},s),/desatualizada/);
 assert.throws(()=>assertReviewed({...b,editPrompt:'changed'},s),/desatualizada/);
 assert.throws(()=>assertReviewed(b,{...s,mediaId:'changed'}),/desatualizada/);
