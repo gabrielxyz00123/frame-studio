@@ -39,37 +39,8 @@
   /* ---------- marcar a pessoa no primeiro quadro ---------- */
   function place(x,y){
     var h=x<.38?'esquerda':(x>.62?'direita':'centro'),v=y<.38?'parte de cima':(y>.62?'parte de baixo':'meio');
-    return 'a pessoa que está '+(h==='centro'?'no centro':'à '+h)+' do quadro, na '+v+' (a cerca de '+Math.round(x*100)+'% da largura e '+Math.round(y*100)+'% da altura)';
+    return 'a pessoa que está '+(h==='centro'?'no centro':'à '+h)+' do quadro, '+(v==='meio'?'no meio':'na '+v)+' (a cerca de '+Math.round(x*100)+'% da largura e '+Math.round(y*100)+'% da altura)';
   }
-  function markPerson(file,done,at){
-    var url=URL.createObjectURL(file),v=document.createElement('video');
-    v.muted=true;v.playsInline=true;v.preload='auto';v.src=url;
-    v.onloadeddata=function(){try{v.currentTime=Math.min(at==null?.001:at,Math.max(0,(v.duration||1)-.05));}catch(e){}};
-    v.onseeked=function(){
-      v.onseeked=null;
-      var W=v.videoWidth,H=v.videoHeight,s=Math.min(1,900/Math.max(W,H));
-      var cv=document.createElement('canvas');cv.width=Math.round(W*s);cv.height=Math.round(H*s);
-      var ctx=cv.getContext('2d');ctx.drawImage(v,0,0,cv.width,cv.height);
-      var base=ctx.getImageData(0,0,cv.width,cv.height),pt=null;
-      var ov=mk('div');ov.id='mark2-ov';
-      var info=mk('div','Clique na pessoa que será substituída.');
-      cv.onclick=function(e){
-        var r=cv.getBoundingClientRect();pt={x:(e.clientX-r.left)/r.width,y:(e.clientY-r.top)/r.height};
-        ctx.putImageData(base,0,0);ctx.strokeStyle='#d7ff3a';ctx.lineWidth=4;
-        ctx.beginPath();ctx.arc(pt.x*cv.width,pt.y*cv.height,Math.max(14,cv.width*.03),0,7);ctx.stroke();
-        info.textContent=place(pt.x,pt.y);
-      };
-      var ok=mk('button','Usar esta marca','primary');ok.type='button';
-      var no=mk('button','Cancelar','secondary');no.type='button';
-      function shut(){URL.revokeObjectURL(url);ov.remove();}
-      no.onclick=shut;
-      ok.onclick=function(){if(!pt)return say('Clique primeiro na pessoa.');done(place(pt.x,pt.y));shut();};
-      var row=mk('div',null,'row');row.append(ok,no);
-      ov.append(info,cv,row);document.body.append(ov);
-    };
-    v.onerror=function(){URL.revokeObjectURL(url);say('Não foi possível abrir o vídeo.');};
-  }
-
   /* ---------- envio em segundo plano ---------- */
   var active=0;
   function limit(){try{return trimSettings().enabled?2:3;}catch(e){return 2;}}
@@ -200,7 +171,7 @@
     return job;
   }
   function outfitOf(it){if(!it.outfitOn)return undefined;var t=(it.outfitText||'').trim();if(!it.outfitMediaId&&!t)return undefined;var o={text:t,prompt:window.fsOutfit?window.fsOutfit.prompt():undefined};if(it.outfitMediaId)o.mediaId=it.outfitMediaId;return o;}
-  function sigOf(it){return JSON.stringify([it.mediaId,it.originalFrameId,it.frameMediaId,(q('#frame-edit-prompt').value||'').trim(),it.mode,it.modelId,it.mode==='multi'?'':(it.target||''),it.mode==='multi'?(it.cast||[]).map(function(p){return [p.modelId,(p.target||'').trim()];}):null,it.outfitOn?[it.outfitMediaId||'',(it.outfitText||'').trim()]:null]);}
+  function sigOf(it){return JSON.stringify([it.mode,it.modelId,it.mode==='multi'?'':(it.target||''),it.mode==='multi'?(it.cast||[]).map(function(p){return [p.modelId,(p.target||'').trim()];}):null,it.outfitOn?[it.outfitMediaId||'',(it.outfitText||'').trim()]:null]);}
   function previewOk(it){return !!(it._pv&&it._pv.job&&it._pv.approved&&it._pv.sig===sigOf(it)&&(it.mode==='frame'?!it.frameMediaId:(it.mode==='multi'&&it.useFrame)));}
   async function makePreview(it){
     if(it.state!=='ready')return say('Aguarde o envio terminar.');
@@ -208,7 +179,7 @@
     var cast=null;
     if(it.mode==='multi'){
       cast=(it.cast||[]).map(function(p){return {modelId:p.modelId,target:(p.target||'').trim()};});
-      try{window.fsIdentityPolicy.validateCast(cast);}catch(e){return say(e.message);}
+      if(!cast.length||cast.some(function(p){return !p.modelId||!p.target;}))return say('Escolha a modelo e descreva cada pessoa antes.');
     }else if(!it.modelId)return say('Escolha a modelo primeiro.');
     if(typeof testConnected!=='undefined'&&!testConnected)return say('Conecte a Higgsfield primeiro.');
     if(!await askConfirm('Editar o primeiro quadro desta linha por cerca de US$ 0,04? Nenhum vídeo será gerado agora.','Ver quadro'))return;
@@ -225,22 +196,50 @@
   var pcss=document.createElement('style');
   pcss.textContent='#fila .pvwrap{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0}#fila .pvcol{flex:1 1 220px;min-width:200px;display:flex;flex-direction:column;gap:8px}#fila .pvcol canvas,#fila .pvcol img{max-width:100%;max-height:340px;width:auto;height:auto;border-radius:8px;display:block;align-self:flex-start}#fila .pvcol canvas{cursor:crosshair}#fila .pvtag{align-self:flex-start;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line,#555)}#fila .pvnote{font-size:13px;padding:8px 10px;border-radius:8px;border:1px solid var(--line,#555)}';
   document.head.append(pcss);
+  (function(){var fx=document.createElement('script');fx.src='faces.js';document.body.append(fx);})();
+  window.addEventListener('fs-faces-ready',function(){if(ui.list)renderQueue();});
+  var MARKTXT=/^a pessoa que est. .*% da altura\)( \[rosto \d+ de \d+\])?$/;
+  function rrect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
   function drawMarks(it){
     var cv=it._frCv;if(!cv||!it._frBase)return;
     var ctx=cv.getContext('2d');ctx.putImageData(it._frBase,0,0);
-    var rad=Math.max(16,cv.width*.04),m=it.marks||{};
+    var W=cv.width,H=cv.height,rad=Math.max(16,W*.04),m=it.marks||{},lw=Math.max(2,W*.006);
+    (it._faces||[]).forEach(function(f){
+      rrect(ctx,f.x*W,f.y*H,f.w*W,f.h*H,lw*3);ctx.lineWidth=lw*2;ctx.strokeStyle='rgba(0,0,0,.45)';ctx.stroke();
+      ctx.lineWidth=lw;ctx.strokeStyle='rgba(255,255,255,.9)';ctx.stroke();
+    });
     Object.keys(m).forEach(function(k){
       var pt=m[k];if(!pt)return;
       if(it.mode!=='multi'&&Number(k)>0)return;
-      var x=pt.x*cv.width,y=pt.y*cv.height;
-      ctx.beginPath();ctx.arc(x,y,rad,0,7);ctx.fillStyle=DOTS[Number(k)%DOTS.length];ctx.fill();
+      var col=DOTS[Number(k)%DOTS.length],x=pt.x*W,y=pt.y*H;
+      if(pt.b){
+        var bx=pt.b[0]*W,by=pt.b[1]*H,bw=pt.b[2]*W,bh=pt.b[3]*H,pad=Math.max(4,bw*.12);
+        rrect(ctx,bx-pad,by-pad,bw+pad*2,bh+pad*2,lw*4);ctx.lineWidth=lw*4;ctx.strokeStyle='#fff';ctx.stroke();ctx.lineWidth=lw*2.4;ctx.strokeStyle=col;ctx.stroke();
+        x=bx+bw/2;y=Math.max(rad*.8,by-pad-rad*.75);rad=Math.max(12,W*.03);
+      }
+      ctx.beginPath();ctx.arc(x,y,rad,0,7);ctx.fillStyle=col;ctx.fill();
       ctx.lineWidth=Math.max(3,rad*.3);ctx.strokeStyle='#fff';ctx.stroke();
       if(it.mode==='multi'){ctx.fillStyle='#fff';ctx.font='bold '+Math.round(rad*1.1)+'px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(Number(k)+1),x,y+1);}
+      rad=Math.max(16,W*.04);
     });
+  }
+  function frameMsg(it){
+    var F=window.fsFaces,n=it.marks?Object.keys(it.marks).length:0,t;
+    if(!F||it._faces===undefined)t='Procurando rostos…';
+    else if(it._faces===null)t='Detector de rostos indisponível agora: a marca fica no ponto clicado.';
+    else if(!it._faces.length)t='Nenhum rosto encontrado neste quadro: a marca fica no ponto clicado.';
+    else t=it._faces.length+' rosto(s) encontrado(s). Clique no rosto de quem será trocado.';
+    return (n?'Marcado: a marca colorida mostra quem será trocado. ':'')+t;
+  }
+  function findFaces(it){
+    var F=window.fsFaces;if(!F||it._facesBusy||it._faces!==undefined||!it._frBase)return;
+    it._facesBusy=true;
+    var c=document.createElement('canvas');c.width=it._frBase.width;c.height=it._frBase.height;c.getContext('2d').putImageData(it._frBase,0,0);
+    F.detect(c).then(function(list){it._faces=list;it._facesBusy=false;drawMarks(it);if(it._frMsg)it._frMsg.textContent=frameMsg(it);});
   }
   function frameBox(it){
     var box=mk('div',null,'pvcol');
-    box.append(mk('b','Vídeo original · clique na pessoa a substituir'));
+    box.append(mk('b','Vídeo original · clique no rosto de quem será trocado'));
     if(!it.file){box.append(mk('span','Para marcar, escolha este vídeo de novo (a fila restaurada não guarda o arquivo).','qst'));return box;}
     if(!it._frCv){
       if(!it._frBusy){
@@ -252,10 +251,15 @@
           it._frBase=cv.getContext('2d').getImageData(0,0,cv.width,cv.height);it._frCv=cv;
           cv.onclick=function(e){
             var r=cv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
-            var multi=it.mode==='multi',idx=multi?(it._who||0):0;
-            (it.marks=it.marks||{})[idx]={x:x,y:y};
-            var tx=place(x,y);
-            if(multi){if(it.cast&&it.cast[idx])it.cast[idx].target=tx;}else it.target=tx;
+            var multi=it.mode==='multi',idx=multi?Math.max(0,Math.min(it._who||0,(it.cast||[]).length-1)):0;
+            var F=window.fsFaces,hit=(F&&it._faces&&it._faces.length)?F.pick(it._faces,x,y):-1,mark,tx;
+            if(hit>=0){var f=it._faces[hit];mark={x:f.cx,y:f.cy,b:[f.x,f.y,f.w,f.h]};tx=place(f.cx,f.cy)+' [rosto '+(hit+1)+' de '+it._faces.length+']';}
+            else{mark={x:x,y:y};tx=place(x,y);}
+            (it.marks=it.marks||{})[idx]=mark;
+            if(multi){
+              if(it.cast&&it.cast[idx])it.cast[idx].target=tx;
+              for(var k=0;k<(it.cast||[]).length;k++){if(!it.marks[k]){it._who=k;break;}}
+            }else it.target=tx;
             persist();renderQueue();
           };
           renderQueue();
@@ -264,18 +268,30 @@
       box.append(mk('span',it._frFail?'Não foi possível mostrar o quadro deste vídeo.':'Carregando o primeiro quadro…','qst'));
       return box;
     }
+    var bar=mk('div',null,'rowf');
     if(it.mode==='multi'&&it.cast&&it.cast.length>1){
       var who=document.createElement('select');
       it.cast.forEach(function(p,k){who.add(new Option('Marcar a pessoa '+(k+1),String(k)));});
       who.value=String(Math.min(it._who||0,it.cast.length-1));who.onchange=function(){it._who=Number(who.value);};
-      box.append(who);
+      bar.append(who);
     }
-    drawMarks(it);box.append(it._frCv);
-    box.append(mk('span',(it.marks&&Object.keys(it.marks).length)?'Marcado. Confira no quadro editado quem será trocado.':'Clique na pessoa para marcar.','qst'));
+    if(it.marks&&Object.keys(it.marks).length){
+      var clr=mk('button','Limpar marcas','secondary fit');clr.type='button';
+      clr.onclick=function(){
+        it.marks={};it._who=0;
+        if(it.mode==='multi')(it.cast||[]).forEach(function(p){if(MARKTXT.test(p.target||''))p.target='';});
+        else if(MARKTXT.test(it.target||''))it.target='the main person';
+        persist();renderQueue();
+      };
+      bar.append(clr);
+    }
+    if(bar.childNodes.length)box.append(bar);
+    findFaces(it);drawMarks(it);box.append(it._frCv);
+    it._frMsg=mk('span',frameMsg(it),'qst');box.append(it._frMsg);
     return box;
   }
   function previewBox(it){
-    var wrap=mk('div',null,'pvwrap'),left=it.mode==='multi'?frameBox(it):null,right=mk('div',null,'pvcol');
+    var wrap=mk('div',null,'pvwrap'),left=frameBox(it),right=mk('div',null,'pvcol');
     var pv=it._pv&&it._pv.sig===sigOf(it)?it._pv:null,stale=!!(it._pv&&it._pv.status==='ready'&&it._pv.sig!==sigOf(it));
     right.append(mk('b','Frame editado · confira rosto, roupa e outras pessoas'));
     if(!pv||pv.status==='error'){
@@ -327,7 +343,7 @@
     var dup=mk('button','Duplicar','secondary fit');dup.type='button';
     dup.onclick=function(){
       if(it.state!=='ready')return say('Aguarde o envio terminar para duplicar.');
-      var c={};Object.keys(it).forEach(function(k){if(k!=='file'&&k[0]!=='_')c[k]=it[k];});c.id=crypto.randomUUID();c.cast=JSON.parse(JSON.stringify(it.cast||[{modelId:'',target:''}]));c.file=it.file;
+      var c={};Object.keys(it).forEach(function(k){if(k!=='file'&&k[0]!=='_')c[k]=it[k];});c.id=crypto.randomUUID();c.cast=JSON.parse(JSON.stringify(it.cast||[{modelId:'',target:''}]));c.marks=JSON.parse(JSON.stringify(it.marks||{}));c.file=it.file;
       queue.splice(i+1,0,c);persist();renderQueue();
     };
     var rm=mk('button','Remover','secondary fit');rm.type='button';rm.onclick=function(){queue.splice(i,1);persist();renderQueue();};
@@ -341,35 +357,34 @@
 
     if(it.mode==='multi'){
       (it.cast=it.cast&&it.cast.length?it.cast:[{modelId:'',target:''}]).forEach(function(p,k){
-        var r=mk('div',null,'rowf'),sel=document.createElement('select'),inp=document.createElement('input'),mb=mk('button','Marcar no vídeo','secondary fit');
+        var r=mk('div',null,'rowf'),sel=document.createElement('select'),inp=document.createElement('input');
         modelOptions(sel,p.modelId);sel.onchange=function(){p.modelId=sel.value;persist();};
-        inp.maxLength=200;inp.placeholder='Quem é esta pessoa? Ex.: a mulher à direita, top preto';inp.value=p.target;inp.oninput=function(){p.target=inp.value;persist();};
-        mb.type='button';mb.onclick=function(){if(!it.file)return say('Para marcar, escolha este vídeo de novo (a fila restaurada não guarda o arquivo).');markPerson(it.file,function(tx){p.target=tx;inp.value=tx;persist();});};
-        r.append(sel,inp,mb);
-        if(it.cast.length>1){var x=mk('button','Remover pessoa','secondary fit');x.type='button';x.onclick=function(){it.cast.splice(k,1);persist();renderQueue();};r.append(x);}
+        inp.maxLength=200;inp.placeholder='Clique no rosto, no quadro abaixo, ou descreva. Ex.: a mulher à direita, top preto';inp.value=p.target;inp.oninput=function(){p.target=inp.value;if(it.marks&&it.marks[k]){delete it.marks[k];drawMarks(it);}persist();};
+        r.append(sel,inp);
+        if(it.cast.length>1){var x=mk('button','Remover pessoa','secondary fit');x.type='button';x.onclick=function(){it.cast.splice(k,1);var nm={};Object.keys(it.marks||{}).forEach(function(j){j=Number(j);if(j<k)nm[j]=it.marks[j];else if(j>k)nm[j-1]=it.marks[j];});it.marks=nm;it._who=0;persist();renderQueue();};r.append(x);}
         row.append(r);
       });
       if(it.cast.length<4){var ap=mk('button','+ Adicionar pessoa','secondary');ap.type='button';ap.onclick=function(){it.cast.push({modelId:'',target:''});persist();renderQueue();};row.append(ap);}
       var lb=document.createElement('label'),cb=document.createElement('input');cb.type='checkbox';cb.checked=!!it.useFrame;cb.onchange=function(){it.useFrame=cb.checked;persist();renderQueue();};lb.append(cb,document.createTextNode(' Editar o primeiro quadro antes (ajuda a evitar tatuagem e troca de rosto, cerca de US$ 0,04)'));row.append(lb);
-      if(it.useFrame)row.append(previewBox(it));
+      if(it.useFrame)row.append(previewBox(it));else{var fw=mk('div',null,'pvwrap');fw.append(frameBox(it));row.append(fw);}
     }else{
-      var r2=mk('div',null,'rowf'),ms=document.createElement('select'),tg=document.createElement('input'),mb2=mk('button','Marcar no vídeo','secondary fit');
-      modelOptions(ms,it.modelId);ms.onchange=function(){it.modelId=ms.value;persist();renderQueue();};
-      tg.maxLength=200;tg.value=it.target||'';tg.placeholder='Quem será substituído?';tg.oninput=function(){it.target=tg.value;persist();};
-      mb2.type='button';mb2.onclick=function(){if(!it.file)return say('Para marcar, escolha este vídeo de novo (a fila restaurada não guarda o arquivo).');markPerson(it.file,function(tx){it.target=tx;tg.value=tx;persist();renderQueue();},it.frameAt);};
-      r2.append(ms,tg,mb2);row.append(r2);
+      var r2=mk('div',null,'rowf'),ms=document.createElement('select'),tg=document.createElement('input');
+      modelOptions(ms,it.modelId);ms.onchange=function(){it.modelId=ms.value;persist();};
+      tg.maxLength=200;tg.value=it.target||'';tg.placeholder='Clique no rosto, no quadro abaixo, ou descreva quem será trocado';tg.oninput=function(){it.target=tg.value;if(it.marks&&it.marks[0]){delete it.marks[0];drawMarks(it);}persist();};
+      r2.append(ms,tg);row.append(r2);
       var r3=mk('div',null,'rowf');if(it.mode==='frame')r3.append(mk('span','Quadro seu (opcional)','lab'));
       var fi=document.createElement('input');fi.type='file';fi.accept=IMG.join(',');
       fi.onchange=async function(){
         var f=fi.files[0];if(!f)return;
         if(IMG.indexOf(f.type)<0||f.size>4*1048576){fi.value='';return say('O quadro deve ser PNG, JPEG ou WebP de até 4 MB.');}
-        try{setSt(it,'Enviando o quadro…');var m=await uploadMedia(f,f.name);it.frameMediaId=m.id;it.framePath=m.path;it.manualFrameApproved=null;it.frameName=f.name;it.auto=false;persist();renderQueue();refreshInfo(it);refreshCost();}
+        try{setSt(it,'Enviando o quadro…');var m=await uploadMedia(f,f.name);it.frameMediaId=m.id;it.frameName=f.name;it.auto=false;persist();refreshInfo(it);refreshCost();}
         catch(e){say(e.message||'Não foi possível enviar o quadro.');refreshInfo(it);}
       };
       if(it.mode==='frame'){r3.append(fi);
       if(it.frameMediaId){var rf=mk('button','Voltar para quadro automático','secondary fit');rf.type='button';rf.onclick=function(){delete it.frameMediaId;delete it.frameName;it.auto=true;persist();renderQueue();};r3.append(rf);}
       row.append(r3);
-      if(!it.frameMediaId)row.append(previewBox(it));else {var mi=mk('img');mi.alt='Quadro manual: confira a identidade e todas as pessoas';mi.style.maxWidth='320px';if(it.framePath)storageSignedUrl(it.framePath,600).then(function(u){mi.src=u;}).catch(function(){});var ml=mk('label'),mc=mk('input');mc.type='checkbox';mc.checked=it.manualFrameApproved===sigOf(it);mc.onchange=function(){it.manualFrameApproved=mc.checked?sigOf(it):null;persist();};ml.append(mc,document.createTextNode(' Conferi a identidade e cada pessoa no quadro manual'));row.append(mi,ml);}}
+      if(!it.frameMediaId)row.append(previewBox(it));}
+      if(it.mode!=='frame'||it.frameMediaId){var fw2=mk('div',null,'pvwrap');fw2.append(frameBox(it));row.append(fw2);}
     }
     return row;
   }
@@ -407,11 +422,7 @@
       else if(it._outfitPending)out.push(n+'ainda enviando a foto da roupa.');
       else if(it.outfitOn&&!it.outfitMediaId&&!(it.outfitText||'').trim())out.push(n+'troca de roupa ligada sem foto nem descrição.');
       else if(it.mode!=='multi'){if(!it.modelId)out.push(n+'falta a modelo.');}
-      if(it.state==='ready'&&it.mode==='multi'){try{window.fsIdentityPolicy.validateCast(it.cast);}catch(e){out.push(n+e.message);}}
-      if(it.state==='ready'&&isAuto(it)&&!previewOk(it))out.push(n+'gere, confira e aprove o quadro editado antes de enviar o vídeo.');
-      if(it.state==='ready'&&it.mode==='multi'&&!it.useFrame)out.push(n+'ative a revisão do primeiro quadro para isolar as identidades.');
-      if(it.state==='ready'&&it.frameMediaId&&it.manualFrameApproved!==sigOf(it))out.push(n+'confira e aprove o quadro manual.');
-      if(it.mode==='multi'){
+      else{
         var c=it.cast||[];
         if(!c.length||c.some(function(p){return !p.modelId||!(p.target||'').trim();}))out.push(n+'falta modelo ou descrição de alguma pessoa.');
         else if(new Set(c.map(function(p){return p.target.trim().toLowerCase();})).size!==c.length)out.push(n+'descreva cada pessoa de forma diferente.');
@@ -432,7 +443,13 @@
     try{
       var items=queue.slice(),c=cost(items);
       if(!await askConfirm((server?'Enviar ':'Gerar ')+items.length+' vídeo(s) da fila'+(server?' para o servidor? Você pode fechar a aba; o servidor junta a voz original sozinho.':'?')+' Estimativa de US$ '+c.toFixed(2).replace('.',',')+' (tabela pública, sem desconto).'+(server?'':' A aba precisa ficar aberta.'),server?'Enviar ao servidor':'Gerar fila'))return;
-      // Paid video submission never auto-approves a generated frame.
+      var need=server?[]:items.filter(function(x){return x.mode==='multi'&&x.useFrame&&!previewOk(x);});
+      for(var ni=0;ni<need.length;ni++){
+        var nx=need[ni];ui.msg.textContent='Editando o quadro '+(ni+1)+' de '+need.length+'…';
+        var ncast=nx.cast.map(function(p){return {modelId:p.modelId,target:p.target.trim()};});
+        var njob=await editQ({modelId:ncast[0].modelId,editPrompt:(q('#frame-edit-prompt').value||'').trim()||defaultImagePrompt,target:'',cast:ncast,outfit:outfitOf(nx)},{originalFrameId:nx.originalFrameId,frameRatio:nx.frameRatio});
+        nx._pv={status:'ready',sig:sigOf(nx),job:njob,approved:true};
+      }
       ui.msg.textContent='';
       var first=items[0],res=q('#resolution').value,duration=Number(q('#duration').value)||0;
       var autoAny=items.some(isAuto);
@@ -444,7 +461,6 @@
         if(x.mode==='frame'){if(x.frameMediaId)s.frameMediaId=x.frameMediaId;else if(x.originalFrameId){s.originalFrameId=x.originalFrameId;s.frameRatio=x.frameRatio;}}
         if(x.mode==='multi'&&x.useFrame&&x.originalFrameId){s.useFrame=true;s.originalFrameId=x.originalFrameId;s.frameRatio=x.frameRatio;}
         if(previewOk(x)){s.frameJob=x._pv.job;s.originalFrameId=x.originalFrameId;s.frameRatio=x.frameRatio;}
-        if(s.mode==='frame'||s.mode==='multi'){var rc={mode:s.mode,editPrompt:(q('#frame-edit-prompt').value||'').trim()||defaultImagePrompt,outfit:outfitOf(x)};s.identityReview={version:window.fsIdentityPolicy.REVIEW_VERSION,key:window.fsIdentityPolicy.reviewKey(rc,s)};}
         var of=outfitOf(x);if(of)s.outfit=of;
         return s;
       });
@@ -453,7 +469,7 @@
         directPrompt:(q('#prompt-direct').value||'').trim(),framePrompt:(q('#prompt-frame').value||'').trim()||defaultFramePrompt,multiPrompt:(q('#prompt-multi').value||'').trim()||defaultMultiPrompt,basePrompt:(q('#prompt-base').value||'').trim(),editPrompt:(q('#frame-edit-prompt').value||'').trim()||defaultImagePrompt,
         frameMethod:autoAny?'auto':'manual',cast:sources[0].cast||[],engine:'Wan 3.0',generateAudio:true,trim:trimSettings(),modelId:sources[0].modelId,modelName:'Fila · '+names.join(', ').slice(0,60),
         files:sources.map(function(s){return {name:s.name,duration:s.duration,out:s.out};}),rate:RATE[res],estimatedCost:c,estimatedVideoCost:c,estimatedImageCost:0,
-        status:'ready',productionStatus:server?'Na fila do servidor':'Pronto para gerar',sources:sources,autoRetry:false,serverMode:server,serverQueue:server,serverConc:Math.max(1,Math.min(10,parseInt(localStorage.getItem('fs-conc'),10)||3)),
+        status:'ready',productionStatus:server?'Na fila do servidor':'Pronto para gerar',sources:sources,serverMode:server,serverQueue:server,serverConc:Math.max(1,Math.min(10,parseInt(localStorage.getItem('fs-conc'),10)||3)),
         jobs:sources.map(function(s,i){var jb={attemptId:crypto.randomUUID(),sourceIndex:i,variation:1,status:'prepared'};if(s.mode==='multi'&&s.frameJob)jb.frameJob=s.frameJob;return jb;})};
       var b=await studioApi('POST',{kind:'batch',data:data});
       try{await saveProduction(b);}catch(e){}
@@ -613,7 +629,7 @@
       var it={id:crypto.randomUUID(),file:sp.file,name:sp.file.name,state:'pending',mode:sp.mode,modelId:sp.modelId||'',target:sp.target||'the main person',cast:sp.cast&&sp.cast.length?JSON.parse(JSON.stringify(sp.cast)):[{modelId:'',target:''}],auto:true,useFrame:sp.mode==='multi'?sp.useFrame!==false:false};
       if(sp.frameFile){
         it._framePending=true;it.auto=false;
-        uploadMedia(sp.frameFile,sp.frameFile.name).then(function(m){it.frameMediaId=m.id;it.framePath=m.path;it.manualFrameApproved=null;it.frameName=sp.frameFile.name;it._framePending=false;persist();renderQueue();refreshInfo(it);refreshCost();})
+        uploadMedia(sp.frameFile,sp.frameFile.name).then(function(m){it.frameMediaId=m.id;it.frameName=sp.frameFile.name;it._framePending=false;persist();refreshInfo(it);refreshCost();})
           .catch(function(e){it._framePending=false;it.auto=true;say((e&&e.message)||'Não foi possível enviar o quadro. Ele será editado automaticamente.');refreshInfo(it);});
       }
       queue.push(it);n++;

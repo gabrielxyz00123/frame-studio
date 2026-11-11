@@ -15,7 +15,7 @@
   function open(file){
     var url=URL.createObjectURL(file),v=document.createElement('video');
     v.muted=true;v.playsInline=true;v.preload='auto';v.src=url;
-    v.onloadeddata=function(){try{v.currentTime=Math.min(trimStart(),Math.max(0,(v.duration||1)-.05));}catch(e){}};
+    v.onloadeddata=function(){try{v.currentTime=0.1;}catch(e){}};
     v.onseeked=function(){
       v.onseeked=null;
       var W=v.videoWidth,H=v.videoHeight,s=Math.min(1,900/Math.max(W,H));

@@ -431,7 +431,7 @@
   }
   function loadZip(){return new Promise(function(res,rej){
     if(window.JSZip)return res(window.JSZip);
-    var s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    var s=document.createElement('script');s.src='vendor/jszip-3.10.1.min.js';
     s.onload=function(){res(window.JSZip);};s.onerror=function(){rej(Error('Não foi possível carregar o gerador de ZIP.'));};document.head.append(s);});}
   async function makeZip(btn){
     var L=window.__lib,list=L.chosen();

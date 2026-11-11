@@ -41,14 +41,27 @@
     btn.disabled=true;
     try{
       if(!it.j.videoPath)throw Error('Este vídeo não está no armazenamento próprio.');
-      if(!await askConfirm('Criar um link que vale por 7 dias? Qualquer pessoa com o link poderá ver e baixar este vídeo.','Criar link'))return;
+      if(!await askConfirm('Criar um link que vale por até 7 dias? Qualquer pessoa com o link poderá ver e baixar este vídeo. Você pode revogar o link a qualquer momento em "Revogar links".','Criar link'))return;
       var s=await studioClient.auth.getSession();
       var r=await fetch('/api/storage?action=share',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.data.session.access_token},body:JSON.stringify({path:it.j.videoPath,secs:604800})});
       var j=await r.json().catch(function(){return {};});
       if(!r.ok||!j.url)throw Error(j.error||(j.missing?'Arquivo não encontrado.':'Não foi possível criar o link.'));
-      try{await navigator.clipboard.writeText(j.url);say('Link copiado. Vale por 7 dias.');}
-      catch(e){window.prompt('Copie o link (vale por 7 dias):',j.url);}
+      try{await navigator.clipboard.writeText(j.url);say('Link copiado. Vale por 7 dias, ou até você revogar.');}
+      catch(e){window.prompt('Copie o link (vale por 7 dias, ou até você revogar):',j.url);}
     }catch(e){say(e.message||'Não foi possível criar o link.');}
+    finally{btn.disabled=false;}
+  }
+  async function revokeLinks(it,btn){
+    btn.disabled=true;
+    try{
+      if(!it.j.videoPath)throw Error('Este vídeo não está no armazenamento próprio.');
+      if(!await askConfirm('Revogar todos os links deste vídeo? Quem tiver o link não conseguirá mais abrir o vídeo.','Revogar'))return;
+      var s=await studioClient.auth.getSession();
+      var r=await fetch('/api/storage?action=unshare',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.data.session.access_token},body:JSON.stringify({path:it.j.videoPath})});
+      var j=await r.json().catch(function(){return {};});
+      if(!r.ok)throw Error(j.error||'Não foi possível revogar os links.');
+      say(j.revoked?(j.revoked===1?'1 link revogado.':j.revoked+' links revogados.'):'Nenhum link ativo para este vídeo.');
+    }catch(e){say(e.message||'Não foi possível revogar os links.');}
     finally{btn.disabled=false;}
   }
   function decorateShare(){
@@ -57,6 +70,8 @@
       var it=c.__it;if(!it||c.querySelector('.lib-share'))return;
       var b=mk('button','Copiar link (7 dias)','secondary lib-share');b.type='button';
       b.onclick=function(){shareLink(it,b);};c.append(b);
+      var rv=mk('button','Revogar links','secondary lib-unshare');rv.type='button';
+      rv.onclick=function(){revokeLinks(it,rv);};c.append(rv);
     });
   }
   function watchGrid(){var g=q('#lib-grid');if(g&&!g.__sh){g.__sh=1;new MutationObserver(decorateShare).observe(g,{childList:true});decorateShare();}}

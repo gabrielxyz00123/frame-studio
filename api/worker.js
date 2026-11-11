@@ -1,9 +1,10 @@
-import {validateCast,validatePhotos,assertReviewed,frameIdentityRule,videoIdentityRule,multiIdentityRule} from '../public/identity-policy.mjs';
 /* Fila no servidor: roda a cada minuto (chamado por um agendador externo) e avanca os lotes marcados com serverQueue.
    Fica desligada enquanto SUPABASE_SERVICE_KEY e CRON_SECRET nao existirem. Cada acao usa so os dados do dono do lote. */
 import {createHmac,timingSafeEqual,createDecipheriv,randomUUID} from 'node:crypto';
 import {r2Config,presign,r2Exists,r2Put,validKey} from './_r2.js';
 import {cleanMp4,fscNote} from './_clean.js';
+import {englishTargets} from './_target.js';
+import {fetchLimited,MB} from './_limits.js';
 import {spawn} from 'node:child_process';
 import {writeFile,readFile,rm,mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -16,6 +17,7 @@ const TERMINAL=['completed','failed','nsfw','canceled'];
 const idPattern=/^[a-f0-9-]{36}$/i;
 const error=(status,message)=>Object.assign(new Error(message),{status});
 const IMG_TYPES=['image/png','image/jpeg','image/webp'];
+const MAX_BATCHES_PER_RUN=6,CANDIDATES_PER_RUN=60,MIN_SLICE_MS=6000,MAX_CONSECUTIVE_ERRORS=3,ARCHIVE_WINDOW_MS=35000;
 
 function sign(key,value){return createHmac('sha256',key).update(value).digest('base64url');}
 function srvKey(){return (process.env.SUPABASE_SERVICE_KEY||'').trim();}
@@ -92,7 +94,8 @@ async function hfStatus(key,job){
   if(!r.ok)throw error(502,'Nao foi possivel consultar o pedido.');
   return readJSON(r);
 }
-const NO_TEXT='NO ON-SCREEN TEXT (mandatory, overrides anything above): the output video must contain no subtitles, captions, lyrics, titles, stickers, emojis, usernames, watermarks or logos at any moment. If @vid1 or @img1 shows any text overlay, do not reproduce it: rebuild the clean scene behind it. Never write the spoken words or the audio as text on screen.';
+const ONE_ONLY='ONE PERSON ONLY: exactly one person is replaced, the target described above. Every other person keeps their own original face, hair and body. The replacement identity must never appear on two people.';
+const NO_TEXT='NO ON-SCREEN TEXT: the output video must contain no subtitles, captions, lyrics, titles, stickers, emojis, usernames, watermarks or logos at any moment, even if @vid1 shows them. Never write the spoken words or the audio as text on screen. This rule is only about text overlays; it does not change who is replaced.';
 const OUTFIT_DEFAULT='OUTFIT CHANGE (overrides any instruction to keep, preserve or copy the original clothing): the replaced person wears the specific outfit below instead of the original clothing. {{outfit}} Reproduce the garments faithfully: cut, color, fabric, pattern and fit, adapted naturally to the body and pose. Do not change identity, pose, background or lighting because of the outfit. People who are not replaced keep their own clothes.';
 function outfitOf(b,s){const o=(s&&s.outfit)||(b&&b.outfit);if(!o||typeof o!=='object')return null;const text=typeof o.text==='string'?o.text.trim().slice(0,500):'',mediaId=typeof o.mediaId==='string'?o.mediaId:'';if(!text&&!mediaId)return null;return {text,mediaId,prompt:typeof o.prompt==='string'&&o.prompt.trim()?o.prompt.trim().slice(0,4000):OUTFIT_DEFAULT};}
 function outfitPrompt(o,ref){return o.prompt.replaceAll('{{outfit}}',[ref,o.text?'Outfit description: '+o.text+'.':''].filter(Boolean).join(' '));}
@@ -108,24 +111,24 @@ function failMessage(r){
 function promptText(value,label,required=false){const t=typeof value==='string'?value.trim():'';if(t.length>20000||(required&&!t))throw error(400,'Preencha '+label+' com ate 20.000 caracteres.');return t;}
 
 /* ---------- montagem dos pedidos (mesma logica de api/higgsfield.js) ---------- */
-export async function buildFrameEdit(owner,b,s,cast,target,modelId){
+async function buildFrameEdit(owner,b,s,cast,target,modelId){
   const frame=await ownedRecord(owner,s.originalFrameId,'media');
   if(!IMG_TYPES.includes(frame.type))throw error(400,'Primeiro quadro invalido.');
   let prompt,photoUrls=[];
   if(Array.isArray(cast)&&cast.length){
     if(cast.length>4)throw error(400,'Associe de 1 a 4 pessoas as modelos.');
-    validateCast(cast);const castModels=[];const seen=new Set(),lines=[];
+    const seen=new Set(),lines=[],where=englishTargets(cast.map(p=>p&&p.target));
     for(const [i,person] of cast.entries()){
       const t=promptText(person.target,'a posicao de cada pessoa',true);
       if(t.length>200||seen.has(t.toLowerCase()))throw error(400,'Identifique cada pessoa de forma distinta.');seen.add(t.toLowerCase());
-      const m=await ownedRecord(owner,person.modelId,'model');castModels.push(m);photoUrls.push(await signedMedia(owner,m.photoPath));
-      lines.push(`Person ${i+1}: ${t}. Replace with the identity of Image ${i+2}: ${String(m.identity||'')}`);
+      const m=await ownedRecord(owner,person.modelId,'model');photoUrls.push(await signedMedia(owner,m.photoPath));
+      lines.push(`Person ${i+1}: ${where[i]}. Replace with the identity of Image ${i+2}: ${String(m.identity||'')}`);
     }
-    validatePhotos(castModels);prompt=[multiIdentityRule(),'Image 1 is the source scene frame. The other images are identity sheets, one per replacement person. Replace ONLY the people listed below in Image 1, each with the identity of its assigned image. Each sheet supplies only face, hair and skin; do not copy its outfit or layout. Never blend or exchange identities. Preserve pose, expression, framing, clothing, background, lighting, objects and every unlisted person. Natural skin texture on every replaced person: no tattoos, no marks copied from the original people, and no new tattoos anywhere. Remove text and reconstruct surfaces naturally. Output one photorealistic scene frame, not a collage.',...lines].join('\n');
+    prompt=['Image 1 is the source scene frame. The other images are identity sheets, one per replacement person. Replace ONLY the people listed below in Image 1, each with the identity of its assigned image. Each sheet supplies only face, hair and skin; do not copy its outfit or layout. Never blend or exchange identities. Each identity is used for exactly ONE person: never give the same face to two people, and keep the same number of people. Preserve pose, expression, framing, clothing, background, lighting, objects and every unlisted person. Natural skin texture on every replaced person: no tattoos, no marks copied from the original people, and no new tattoos anywhere. Remove text and reconstruct surfaces naturally. Output one photorealistic scene frame, not a collage.',...lines].join('\n');
   }else{
     const model=await ownedRecord(owner,modelId,'model');
-    prompt=promptText(b.editPrompt,'o prompt de edicao do quadro',true).replaceAll('{{identity}}',String(model.identity||'')).replaceAll('{{target}}',String(target||'the main person').slice(0,200));
-    prompt+='\n\n'+frameIdentityRule(target);photoUrls=[await signedMedia(owner,model.photoPath)];
+    prompt=promptText(b.editPrompt,'o prompt de edicao do quadro',true).replaceAll('{{identity}}',String(model.identity||'')).replaceAll('{{target}}',englishTargets([String(target||'the main person').slice(0,200)])[0]);prompt+='\n\n'+ONE_ONLY;
+    photoUrls=[await signedMedia(owner,model.photoPath)];
   }
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';const oi=await outfitImage(owner,outfit);if(oi){photoUrls.push(oi);ref='The outfit is shown in Image '+(photoUrls.length+1)+'.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
@@ -133,7 +136,7 @@ export async function buildFrameEdit(owner,b,s,cast,target,modelId){
   const frameRatio=['1:1','2:3','3:2','3:4','4:3','7:9','9:7','9:16','16:9','21:9'].includes(s.frameRatio)?s.frameRatio:'9:16';
   return {prompt,image_urls:[await signedMedia(owner,frame.path),...photoUrls],resolution:'1k',aspect_ratio:frameRatio,prompt_extend:false,enable_thinking:false};
 }
-export async function buildVideo(owner,key,b,s,j,frameImageUrl){
+async function buildVideo(owner,key,b,s,j,frameImageUrl){
   const smode=s.mode||b.mode,smodel=s.modelId||b.modelId,scast=s.cast||b.cast,starget=(s.target!=null&&s.mode)?s.target:b.target;
   if(!['direct','frame','multi'].includes(smode))throw error(422,'Fluxo invalido.');
   const duration=Number(s.out||b.duration),resolution=b.resolution,ratio=b.ratio;
@@ -143,31 +146,32 @@ export async function buildVideo(owner,key,b,s,j,frameImageUrl){
   let imageUrls=[],prompt;const base=promptText(b.basePrompt,'o prompt base');
   if(smode==='multi'){
     if(!Array.isArray(scast)||scast.length<1||scast.length>4)throw error(400,'Associe de 1 a 4 pessoas as modelos.');
-    validateCast(scast);const castModels=[];const targets=new Set(),mapping=[];let frameUrl=frameImageUrl||null;
-    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');frameUrl=await signedMedia(owner,f.path);}
+    const targets=new Set(),mapping=[],frameUrl=frameImageUrl||null,where=englishTargets(scast.map(p=>p&&p.target));
+    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');}
     const off=frameUrl?1:0;
     for(const [i,person] of scast.entries()){
       const t=promptText(person.target,'a posicao de cada pessoa',true);
       if(t.length>200||targets.has(t.toLowerCase()))throw error(400,'Identifique cada pessoa de forma distinta.');targets.add(t.toLowerCase());
-      const model=await ownedRecord(owner,person.modelId,'model');castModels.push(model);imageUrls.push(await signedMedia(owner,model.photoPath));
-      mapping.push(`Person ${i+1}: ${t}. Replacement identity is @img${i+1+off}: ${String(model.identity||'')}`);
+      const model=await ownedRecord(owner,person.modelId,'model');imageUrls.push(await signedMedia(owner,model.photoPath));
+      mapping.push(`Person ${i+1}: ${where[i]}. Replacement identity is @img${i+1+off}: ${String(model.identity||'')}`);
     }
     if(/\{\{identity\}\}|\{\{target\}\}/.test(base))throw error(400,'Prompt base invalido para varias pessoas.');
-    prompt=[base,promptText(b.multiPrompt,'o prompt de multiplas pessoas',true),'CAST MAPPING — mandatory priority over conflicting single-person instructions. Apply each identity ONLY to its matched person. Never blend or exchange identities. Unlisted people remain unchanged.',...mapping,...(frameUrl?['FRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly and keep them consistent through the whole video; the other images are the same identities for reference. @vid1 defines motion, timing, clothing and scene. Replaced people must have no tattoos. Exact opening-frame reproduction is not required.']:[])].filter(Boolean).join('\n\n');
-    validatePhotos(castModels);prompt+='\n\n'+multiIdentityRule();if(frameUrl)imageUrls=[frameUrl,...imageUrls];
+    prompt=[base,promptText(b.multiPrompt,'o prompt de multiplas pessoas',true),'CAST MAPPING — mandatory priority over conflicting single-person instructions. Apply each identity ONLY to its matched person. Never blend or exchange identities. Each identity appears on exactly ONE person: never show the same face on two people. Unlisted people keep their own original face and remain unchanged.',...mapping,...(frameUrl?['FRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly and keep them consistent through the whole video; the other images are the same identities for reference. @vid1 defines motion, timing, clothing and scene. Replaced people must have no tattoos. Exact opening-frame reproduction is not required.']:[])].filter(Boolean).join('\n\n');
+    if(frameUrl)imageUrls=[frameUrl,...imageUrls];
   }else{
-    const model=await ownedRecord(owner,smodel,'model'),identity=String(model.identity||''),target=String(starget||'the main person').slice(0,200);
+    const model=await ownedRecord(owner,smodel,'model'),identity=String(model.identity||''),target=englishTargets([String(starget||'the main person').slice(0,200)])[0];
     const flowPrompt=promptText(smode==='frame'?b.framePrompt:b.directPrompt,'o prompt do fluxo',true);
     prompt=[...new Set([base,flowPrompt].filter(Boolean))].join('\n\n').replaceAll('{{identity}}',identity).replaceAll('{{target}}',target);
     if(smode==='frame'){
       prompt+='\n\nFRAME REFERENCE PRIORITY: @img1 is an edited scene frame, not an identity sheet. Use its person identity and appearance as the visual reference; @vid1 defines motion, timing, clothing and scene. An edited frame IS supplied. This overrides any conflicting description of @img1 or absence of an edited frame above. Preserve the mapped identity throughout the video. Exact opening-frame reproduction is not required.';
       if(frameImageUrl)imageUrls=[frameImageUrl];
       else{const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Envie o primeiro quadro editado.');imageUrls=[await signedMedia(owner,f.path)];}
-    imageUrls.push(await signedMedia(owner,model.photoPath));prompt+='\n\n'+videoIdentityRule(target);
-     }else imageUrls=[await signedMedia(owner,model.photoPath)];
+    }else imageUrls=[await signedMedia(owner,model.photoPath)];
   }
+  if(smode==='multi'&&!frameImageUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');imageUrls=[await signedMedia(owner,f.path),...imageUrls];prompt+='\n\nFRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly.';}
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';if(frameImageUrl){ref='The outfit is already applied in @img1 (the edited frame). Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else{const oi=await outfitImage(owner,outfit);if(oi){imageUrls.push(oi);ref='The outfit is shown in @img'+imageUrls.length+'. Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else ref='Ignore the clothing seen in @vid1 and keep this outfit for the whole video.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
+  if(smode==='frame')prompt+='\n\n'+ONE_ONLY;
   if(smode==='frame'||smode==='multi')prompt+='\n\n'+NO_TEXT;
  if(prompt.length>20000)throw error(400,'A soma dos prompts ultrapassa 20.000 caracteres.');
   let audioUrl=null;
@@ -175,16 +179,13 @@ export async function buildVideo(owner,key,b,s,j,frameImageUrl){
     audioUrl=await referenceAudio(owner,key,media);
     prompt+='\n\nAUDIO: Audio 1 is the original soundtrack of @vid1 (it may be speech, music, ambient sound or a mix). Keep its exact timing. The output must start at the very first frame of @vid1 with the same framing, camera angle and pose, and follow @vid1 shot by shot until the end. Never add an intro, a new scene, a different angle or a person talking to the camera that is not in @vid1. Only if the person in @vid1 is actually speaking or singing, match the lips to Audio 1 word for word; otherwise keep the mouth natural. Do not invent, change, translate or add speech.';
   }
-  if(smode==='frame')prompt+='\n\n'+videoIdentityRule(starget);if(smode==='multi')prompt+='\n\n'+multiIdentityRule();
-  const input={prompt,image_urls:imageUrls,video_urls:[await signedMedia(owner,media.path)],duration,resolution,aspect_ratio:ratio,generate_audio:!!b.generateAudio,prompt_extend:false,enable_thinking:false};
+  const input={prompt,image_urls:imageUrls,video_urls:[await signedMedia(owner,media.path)],duration,resolution,aspect_ratio:ratio,generate_audio:!!b.generateAudio,enable_thinking:false};
   if(audioUrl)input.audio_urls=[audioUrl];
   return {input,smode};
 }
 async function referenceAudio(owner,key,media){
-  const src=await signedMedia(owner,media.audioPath),got=await fetch(src,{redirect:'error',signal:AbortSignal.timeout(20000)});
-  if(!got.ok)throw error(502,'Nao foi possivel ler o audio de referencia.');
-  const bytes=Buffer.from(await got.arrayBuffer());
-  if(bytes.length<1000||bytes.length>15*1048576||bytes.toString('latin1',0,4)!=='RIFF')throw error(400,'Audio de referencia invalido.');
+  const bytes=await fetchLimited(await signedMedia(owner,media.audioPath),{max:15*MB,timeout:20000,redirect:'error',label:'audio de referencia'});
+  if(bytes.length<1000||bytes.toString('latin1',0,4)!=='RIFF')throw error(400,'Audio de referencia invalido.');
   const up=await fetch(HF+'/files/generate-upload-url',{method:'POST',headers:{Authorization:'Key '+key,'Content-Type':'application/json'},body:JSON.stringify({content_type:'audio/wav'}),redirect:'error',signal:AbortSignal.timeout(15000)});
   if(!up.ok)throw error(502,'A Higgsfield nao preparou o envio do audio.');
   const slot=await up.json();if(!slot.upload_url||!slot.public_url)throw error(502,'Resposta inesperada ao enviar o audio.');
@@ -213,11 +214,10 @@ async function muxWithMedia(owner,media,buf){
   const audioPath=media.audioHiPath||media.audioPath;
   if(typeof audioPath!=='string')return null;
   const bin=await ffmpegPath();if(!bin)throw error(503,'ffmpeg indisponivel.');
-  const a=await fetch(await signedMedia(owner,audioPath),{redirect:'error',signal:AbortSignal.timeout(15000)});
-  if(!a.ok)throw error(502,'Nao foi possivel ler o audio original.');
+  const audio=await fetchLimited(await signedMedia(owner,audioPath),{max:60*MB,timeout:15000,redirect:'error',label:'audio original'});
   const dir=await mkdtemp(join(tmpdir(),'mux-'));
   try{
-    await writeFile(join(dir,'v.mp4'),buf);await writeFile(join(dir,'a.wav'),Buffer.from(await a.arrayBuffer()));
+    await writeFile(join(dir,'v.mp4'),buf);await writeFile(join(dir,'a.wav'),audio);
     await runFfmpeg(bin,['-y','-v','error','-i',join(dir,'v.mp4'),'-i',join(dir,'a.wav'),'-map','0:v:0','-map','1:a:0','-c:v','copy','-af','apad','-c:a','aac','-b:a','192k','-ar','48000','-ac','1','-shortest','-movflags','+faststart',join(dir,'o.mp4')]);
     const out=await readFile(join(dir,'o.mp4'));
     return out.length>1000?out:null;
@@ -243,16 +243,15 @@ function cleanBuf(buf){
 }
 
 /* ---------- guardar o video pronto ---------- */
-async function archive(owner,j,b){
-  const videoUrl=j.videoUrl;
-  if(typeof videoUrl!=='string'||!videoUrl.startsWith('https://'))throw error(409,'Video ainda sem endereco.');
-  const path=owner+'/generated/'+j.requestId+'.mp4',objectPath=path.split('/').map(encodeURIComponent).join('/');
+/* providerUrl precisa vir de uma consulta de status feita agora na Higgsfield (outputVideo).
+   Nunca usar j.videoUrl: o JSON do lote pode ser editado pelo proprio usuario. */
+async function archive(owner,j,b,providerUrl){
+  if(!idPattern.test(j.requestId||''))throw error(400,'Pedido invalido.');
+  const path=owner+'/generated/'+j.requestId+'.mp4';
   let existing=null;try{existing=await signedMedia(owner,path);}catch{}
   if(!existing){
-    const v=await fetch(videoUrl,{signal:AbortSignal.timeout(25000)});
-    if(!v.ok)throw error(502,'Nao foi possivel obter o video gerado.');
-    let buf=Buffer.from(await v.arrayBuffer());
-    if(buf.length>50*1048576)throw error(413,'Video maior que 50 MB.');
+    if(typeof providerUrl!=='string'||!providerUrl.startsWith('https://'))throw error(409,'Video ainda sem endereco.');
+    let buf=await fetchLimited(providerUrl,{max:50*MB,timeout:25000,label:'video gerado'});
     if(b&&!j.audioMerged){
       try{const out=await muxVoice(owner,b,j,buf);if(out){buf=out;j.audioMerged=true;j.audioMergeError='';}}
       catch(e){j.audioMergeError=e.message;}
@@ -271,12 +270,18 @@ function isFrameEdit(b,s){
 }
 function resetForRetry(j){j.retried=true;j.lastError=j.error||'';delete j.requestId;delete j.statusUrl;delete j.ticket;delete j.error;delete j.videoUrl;delete j.downloadUrl;delete j.videoPath;j.attemptId=randomUUID();j.status='prepared';}
 
+async function archiveSafely(ctx,j,providerUrl){
+  if(!ctx.canArchive())return;/* sem tempo para baixar+mux+upload: fica para a proxima execucao */
+  await ctx.archiveSlot(async()=>{
+    try{await archive(ctx.owner,j,ctx.b,providerUrl);}catch(e){j.archiveError=e.message;j.archiveTries=(j.archiveTries||0)+1;}
+  });
+}
 async function pollJob(ctx,j){
   const r=await hfStatus(ctx.key,j);
   j.status=r.status||j.status;
   if(r.status==='completed'){
-    j.videoUrl=outputVideo(r)||j.videoUrl;
-    try{await archive(ctx.owner,j,ctx.b);}catch(e){j.archiveError=e.message;j.archiveTries=(j.archiveTries||0)+1;}
+    const fresh=outputVideo(r);if(fresh)j.videoUrl=fresh;
+    await archiveSafely(ctx,j,fresh);
     ctx.b.srvFails=0;
   }else if(['failed','nsfw','canceled'].includes(r.status)){
     j.error=failMessage(r);
@@ -286,7 +291,7 @@ async function pollJob(ctx,j){
 }
 async function submitJob(ctx,j){
   const {b,owner,key}=ctx,s=b.sources[j.sourceIndex];
-  assertReviewed(b,s);let frameImageUrl=null;
+  let frameImageUrl=null;
   if(isFrameEdit(b,s)){
     const smode=s.mode||b.mode;
     let fj=j.frameJob&&j.frameJob.requestId?j.frameJob:(s.frameJob&&s.frameJob.requestId?s.frameJob:null);
@@ -324,9 +329,13 @@ async function submitJob(ctx,j){
 }
 
 /* ---------- um lote ---------- */
-async function runBatch(row,budget,persist){
+/* limita downloads simultaneos de videos (cada um pode ter ate 50 MB + a copia com audio) */
+function limiter(max){let active=0;const queue=[];const next=()=>{if(active>=max||!queue.length)return;active++;const {fn,done}=queue.shift();fn().finally(()=>{active--;done();next();});};return fn=>new Promise(done=>{queue.push({fn,done});next();});}
+async function runBatch(row,budget,persist=async()=>{},hardStop=budget+12000){
   const owner=row.owner_id,b=row.data;
-  const ctx={owner,b,key:null,autoRetry:b.autoRetry===true,prices:{},persist};
+  const ctx={owner,b,key:null,autoRetry:b.autoRetry!==false,prices:{},persist,archiveSlot:limiter(2),
+    /* baixar (25 s) + ffmpeg (20 s) + upload (30 s) nao cabe no fim da funcao de 60 s */
+    canArchive:()=>Date.now()+ARCHIVE_WINDOW_MS<hardStop};
   const conc=Math.max(1,Math.min(10,Number(b.serverConc)||3));
   let note='';
   try{ctx.key=await credentialFor(owner);}
@@ -336,13 +345,17 @@ async function runBatch(row,budget,persist){
   const flying=jobs.filter(j=>!TERMINAL.includes(j.status)&&j.requestId);
   await Promise.all(flying.map(async j=>{try{await pollJob(ctx,j);}catch(e){j.pollError=e.message;}}));
   /* videos prontos que ainda nao foram guardados */
-  await Promise.all(jobs.filter(j=>j.status==='completed'&&j.requestId&&!j.videoPath&&j.videoUrl).map(async j=>{try{await archive(owner,j,b);}catch(e){j.archiveError=e.message;j.archiveTries=(j.archiveTries||0)+1;}}));
+  /* a URL e consultada de novo na Higgsfield: o valor salvo no lote nao e confiavel */
+  await Promise.all(jobs.filter(j=>j.status==='completed'&&j.requestId&&!j.videoPath&&(j.archiveTries||0)<5&&!flying.includes(j)).map(async j=>{
+    if(!ctx.canArchive())return;
+    try{const r=await hfStatus(ctx.key,j);if(r.status!=='completed')return;await archiveSafely(ctx,j,outputVideo(r));}
+    catch(e){j.archiveError=e.message;j.archiveTries=(j.archiveTries||0)+1;}
+  }));
   /* 2) enviar novos, respeitando a simultaneidade */
   let inflight=jobs.filter(j=>!TERMINAL.includes(j.status)&&(j.requestId||(j.frameJob&&j.frameJob.requestId))).length;
-  try{for(const j of jobs)if(!TERMINAL.includes(j.status)&&!j.requestId)assertReviewed(b,b.sources[j.sourceIndex]);}catch(e){b.status='paused';b.productionStatus='Pausado: '+e.message;await ctx.persist();return 'paused';}
   const waiting=jobs.filter(j=>!TERMINAL.includes(j.status)&&!j.requestId);
   for(const j of waiting){
-    if(['uncertain','submitting'].includes(j.status)||(['uncertain','submitting'].includes(j.frameJob?.status)&&!j.frameJob?.requestId)){j.status='uncertain';b.status='paused';b.productionStatus='Pedido sem confirmação. Confira Requests antes de reenviar.';await ctx.persist();return 'paused';}
+    if(['uncertain','submitting'].includes(j.status)||(['uncertain','submitting'].includes(j.frameJob?.status)&&!j.frameJob?.requestId)){j.status='uncertain';b.status='paused';b.productionStatus='Pedido sem confirmação. Confira Requests na Higgsfield antes de retomar.';await ctx.persist();return 'paused';}
     if(Date.now()>budget)break;
     if((b.srvFails||0)>=3)break;
     const inFrame=!!(j.frameJob&&j.frameJob.requestId);
@@ -353,8 +366,12 @@ async function runBatch(row,budget,persist){
       if(!inFrame&&(res==='submitted'||res==='frame'))inflight++;
       j.tries=0;
     }catch(e){
-      if((j.status==='submitting'&&!j.requestId)||(j.frameJob?.status==='submitting'&&!j.frameJob?.requestId)){if(!e.status||e.status>=500){j.status='uncertain';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='uncertain';j.error='Envio sem confirmação. Confira Requests antes de reenviar.';b.status='paused';b.productionStatus=j.error;await ctx.persist();return 'paused';}j.status='prepared';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='prepared';}
-      if(e.status===409||e.status===402||e.status===401){b.status='paused';b.productionStatus='Pausado: '+e.message;note='paused';break;}
+      if((j.status==='submitting'&&!j.requestId)||(j.frameJob?.status==='submitting'&&!j.frameJob?.requestId)){
+        /* sem resposta ou erro do servidor: o pedido pode ter sido aceito e cobrado; nao reenviar */
+        if(!e.status||e.status>=500){j.status='uncertain';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='uncertain';j.error='Envio sem confirmação. Confira Requests na Higgsfield antes de retomar.';b.status='paused';b.productionStatus=j.error;await ctx.persist();return 'paused';}
+        j.status='prepared';if(j.frameJob&&!j.frameJob.requestId)j.frameJob.status='prepared';
+      }
+      if(e.status===402||e.status===401){b.status='paused';b.productionStatus='Pausado: '+e.message;note='paused';break;}
       if(e.status===429){note='limite';break;}
       if(e.status&&e.status<500&&e.status!==429){j.status='failed';j.error=e.message;b.srvFails=(b.srvFails||0)+1;}
       else{j.tries++;j.pollError=e.message;if(j.tries>=3){j.status='failed';j.error='Falha ao enviar apos 3 tentativas: '+e.message;b.srvFails=(b.srvFails||0)+1;}}
@@ -386,21 +403,39 @@ async function saveBatch(row,token,data){
   if(!rows.length)throw error(409,'A reserva do lote foi perdida.');
 }
 
+/* Escolha justa: os lotes atendidos ha mais tempo (srvLastRun) vem primeiro e cada dono
+   recebe no maximo um lote por rodada antes de qualquer dono receber o segundo. Assim
+   lotes antigos ou de um unico usuario nao monopolizam a fila de todos. */
+export function pickFair(rows,max=MAX_BATCHES_PER_RUN){
+  const byOwner=new Map();
+  for(const row of rows){if(!byOwner.has(row.owner_id))byOwner.set(row.owner_id,[]);byOwner.get(row.owner_id).push(row);}
+  const queues=[...byOwner.values()],picked=[];
+  while(picked.length<max&&queues.some(q=>q.length))for(const q of queues){if(picked.length>=max)break;if(q.length)picked.push(q.shift());}
+  return picked;
+}
 export async function runWorker(){
-  const started=Date.now(),budget=started+45000,out={batches:0,results:[]};
-  const rows=await sb('/rest/v1/frame_library?kind=eq.batch&deleted=eq.false&data->>serverQueue=eq.true&data->>status=in.(ready,running)&select=id,owner_id,data&order=created_at.asc&limit=6');
-  for(const row of rows){
+  const started=Date.now(),budget=started+45000,hardStop=started+57000,out={batches:0,results:[]};
+  const candidates=await sb('/rest/v1/frame_library?kind=eq.batch&deleted=eq.false&data->>serverQueue=eq.true&data->>status=in.(ready,running)&select=id,owner_id,data&order=data->>srvLastRun.asc.nullsfirst,created_at.asc&limit='+CANDIDATES_PER_RUN);
+  const now=Date.now()/1000,rows=pickFair(candidates.filter(r=>!(Number(r.data?.leaseUntil||0)>now)));
+  for(const [index,row] of rows.entries()){
     if(Date.now()>budget)break;
     let got=null;
     try{got=await claim(row);}catch{got=null;}
     if(!got){out.results.push({id:row.id,skipped:true});continue;}
     const work={id:row.id,owner_id:row.owner_id,data:got.data};
+    /* fatia de tempo: o tempo que resta e dividido entre os lotes que ainda faltam */
+    const left=rows.length-index,slice=Math.min(budget,Date.now()+Math.max(MIN_SLICE_MS,(budget-Date.now())/left));
     let result='error';
     try{
-      result=await runBatch(work,budget,()=>saveBatch(work,got.token,work.data));
+      result=await runBatch(work,slice,()=>saveBatch(work,got.token,work.data),hardStop);
+      work.data.srvErrors=0;
     }catch(e){
       work.data.pollError=e.message;result='error';
+      /* quarentena: um lote que falha sempre nao pode ocupar a fila para sempre */
+      work.data.srvErrors=(Number(work.data.srvErrors)||0)+1;
+      if(work.data.srvErrors>=MAX_CONSECUTIVE_ERRORS){work.data.status='paused';work.data.productionStatus='Pausado: o servidor falhou '+work.data.srvErrors+' vezes seguidas neste lote ('+String(e.message||'erro').slice(0,160)+'). Revise e retome.';result='quarantined';}
     }
+    work.data.srvLastRun=new Date().toISOString();
     const fin={...work.data};delete fin.leaseToken;delete fin.leaseUntil;
     try{await saveBatch(work,got.token,fin);}catch(e){result='save-failed';}
     out.batches++;out.results.push({id:row.id,result});
@@ -421,10 +456,7 @@ async function muxForUser(req){
   const videoPath=body.videoPath;
   if(typeof videoPath!=='string'||!videoPath.startsWith(owner+'/generated/')||videoPath.includes('..'))throw error(400,'Video invalido.');
   const media=await ownedRecord(owner,body.mediaId,'media');
-  const src=await fetch(await signedMedia(owner,videoPath),{redirect:'error',signal:AbortSignal.timeout(20000)});
-  if(!src.ok)throw error(502,'Nao foi possivel ler o video gerado.');
-  const buf=Buffer.from(await src.arrayBuffer());
-  if(buf.length>50*1048576)throw error(413,'Video maior que 50 MB.');
+  const buf=await fetchLimited(await signedMedia(owner,videoPath),{max:50*MB,timeout:20000,redirect:'error',label:'video gerado'});
   const out=await muxWithMedia(owner,media,buf);
   if(!out)throw error(422,'Este video nao tem audio original guardado.');
   const base=videoPath.replace(/\.mp4$/,'').replace(/-voz-[a-f0-9]{8}$/,'');
