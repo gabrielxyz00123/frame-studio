@@ -25,6 +25,11 @@
       if(!cast.length||cast.some(function(r){return !r.modelId||!r.target;}))return say('Escolha a modelo e descreva cada pessoa antes de adicionar.');
       if(new Set(cast.map(function(r){return r.target.toLowerCase();})).size!==cast.length)return say('Descreva cada pessoa de forma diferente.');
       spec.cast=cast;spec.modelId=cast[0].modelId;
+      var mf=q('#multi-frame');frameFile=mf&&mf.files[0]||null;
+      if(frameFile){
+        if(['image/png','image/jpeg','image/webp'].indexOf(frameFile.type)<0||frameFile.size>4*1048576)return say('O quadro editado deve ser PNG, JPEG ou WebP de até 4 MB.');
+        if(files.length>1)return say('Com quadro enviado por você, adicione um vídeo de cada vez.');
+      }
     }else{
       var mid=q('#model').value;
       if(!mid)return say('Escolha a modelo antes de adicionar.');
@@ -40,7 +45,7 @@
     var n=window.fsQueue.add(specs);
     files=[];try{selectedFiles.clear();}catch(e){}
     renderFiles();
-    if(frameFile){var ef=q('#edited-frame');if(ef)ef.value='';}
+    if(frameFile){var ef=q(m==='multi'?'#multi-frame':'#edited-frame');if(ef)ef.value='';}
     say(n+' vídeo(s) adicionado(s) à fila. Escolha o próximo vídeo.');
     refresh();
   }
@@ -62,4 +67,5 @@
   }
   init();setInterval(function(){init();refresh();},1500);
   window.addEventListener('fs-queue-ready',refresh);
+  window.addEventListener('fs-queue-change',refresh);
 })();

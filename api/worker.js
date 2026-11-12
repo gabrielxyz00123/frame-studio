@@ -146,8 +146,9 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
   let imageUrls=[],prompt;const base=promptText(b.basePrompt,'o prompt base');
   if(smode==='multi'){
     if(!Array.isArray(scast)||scast.length<1||scast.length>4)throw error(400,'Associe de 1 a 4 pessoas as modelos.');
-    const targets=new Set(),mapping=[],frameUrl=frameImageUrl||null,where=englishTargets(scast.map(p=>p&&p.target));
-    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');}
+    const targets=new Set(),mapping=[],where=englishTargets(scast.map(p=>p&&p.target));let frameUrl=frameImageUrl||null;
+    /* Quadro enviado pelo usuario: entra como @img1, entao as identidades comecam em @img2. */
+    if(!frameUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Quadro invalido.');frameUrl=await signedMedia(owner,f.path);}
     const off=frameUrl?1:0;
     for(const [i,person] of scast.entries()){
       const t=promptText(person.target,'a posicao de cada pessoa',true);
@@ -168,7 +169,6 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
       else{const f=await ownedRecord(owner,s.frameMediaId,'media');if(!IMG_TYPES.includes(f.type))throw error(400,'Envie o primeiro quadro editado.');imageUrls=[await signedMedia(owner,f.path)];}
     }else imageUrls=[await signedMedia(owner,model.photoPath)];
   }
-  if(smode==='multi'&&!frameImageUrl&&s.frameMediaId){const f=await ownedRecord(owner,s.frameMediaId,'media');imageUrls=[await signedMedia(owner,f.path),...imageUrls];prompt+='\n\nFRAME REFERENCE PRIORITY: @img1 is an already edited scene frame where the replacements are applied. Match those faces, hair and skin exactly.';}
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';if(frameImageUrl){ref='The outfit is already applied in @img1 (the edited frame). Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else{const oi=await outfitImage(owner,outfit);if(oi){imageUrls.push(oi);ref='The outfit is shown in @img'+imageUrls.length+'. Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else ref='Ignore the clothing seen in @vid1 and keep this outfit for the whole video.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
   if(smode==='frame')prompt+='\n\n'+ONE_ONLY;
