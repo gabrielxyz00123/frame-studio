@@ -537,7 +537,7 @@ async function capturePlan() {
     resolution: $('#resolution').value,
     ratio: $('#ratio').value,
     target: $('#target-person').value.trim(),
-    directPrompt: $('#prompt-direct').value.trim(),
+    directPrompt: $('#prompt-direct').value.trim() || defaultDirectPrompt,
     framePrompt: $('#prompt-frame').value.trim() || defaultFramePrompt,
     multiPrompt: $('#prompt-multi').value.trim() || defaultMultiPrompt,
     basePrompt: $('#prompt-base').value.trim(),
@@ -1077,7 +1077,7 @@ window.renderProductionBatch = (b, card) => {
         $('#duration').value = b.duration === 0 ? 0 : Math.min(15, Number(b.duration) || 15);
         $('#resolution').value = b.resolution;
         $('#ratio').value = b.ratio;
-        $('#prompt-direct').value = b.directPrompt || b.prompts?.direct || '';
+        $('#prompt-direct').value = b.directPrompt || b.prompts?.direct || defaultDirectPrompt;
         $('#prompt-frame').value = b.framePrompt || b.prompts?.frame || defaultFramePrompt;
         $('#prompt-multi').value = b.multiPrompt || defaultMultiPrompt;
         $('#prompt-base').value = b.basePrompt || b.prompts?.base || '';
@@ -1314,6 +1314,7 @@ document.querySelectorAll('.flow').forEach((b) => b.addEventListener('click', up
   'prompt-multi',
 ].forEach((id) => $('#' + id).addEventListener('change', updateTest));
 new MutationObserver(updateTest).observe($('#file-list'), { childList: true });
+$('#prompt-direct').value = defaultDirectPrompt;
 $('#prompt-frame').value = defaultFramePrompt;
 $('#prompt-multi').value = defaultMultiPrompt;
 $('#frame-edit-prompt').value = defaultImagePrompt;

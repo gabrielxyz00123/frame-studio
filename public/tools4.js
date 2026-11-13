@@ -518,7 +518,7 @@
       });
       var names=[];sources.forEach(function(s){s.modelName.split(' + ').forEach(function(n){if(names.indexOf(n)<0)names.push(n);});});
       var data={mode:first.mode,outputs:items.length,duration:duration,resolution:res,ratio:q('#ratio').value,target:sources[0].target||'',
-        directPrompt:(q('#prompt-direct').value||'').trim(),framePrompt:(q('#prompt-frame').value||'').trim()||defaultFramePrompt,multiPrompt:(q('#prompt-multi').value||'').trim()||defaultMultiPrompt,basePrompt:(q('#prompt-base').value||'').trim(),editPrompt:(q('#frame-edit-prompt').value||'').trim()||defaultImagePrompt,
+        directPrompt:(q('#prompt-direct').value||'').trim()||defaultDirectPrompt,framePrompt:(q('#prompt-frame').value||'').trim()||defaultFramePrompt,multiPrompt:(q('#prompt-multi').value||'').trim()||defaultMultiPrompt,basePrompt:(q('#prompt-base').value||'').trim(),editPrompt:(q('#frame-edit-prompt').value||'').trim()||defaultImagePrompt,
         frameMethod:autoAny?'auto':'manual',cast:sources[0].cast||[],engine:'Wan 3.0',generateAudio:true,trim:trimSettings(),modelId:sources[0].modelId,modelName:'Fila · '+names.join(', ').slice(0,60),
         files:sources.map(function(s){return {name:s.name,duration:s.duration,out:s.out};}),rate:RATE[res],estimatedCost:c,estimatedVideoCost:c,estimatedImageCost:0,
         status:'ready',productionStatus:server?'Na fila do servidor':'Pronto para gerar',sources:sources,serverMode:server,serverQueue:server,serverConc:Math.max(1,Math.min(10,parseInt(localStorage.getItem('fs-conc'),10)||3)),
