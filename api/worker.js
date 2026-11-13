@@ -95,7 +95,9 @@ async function hfStatus(key,job){
   return readJSON(r);
 }
 const ONE_ONLY='ONE PERSON ONLY: exactly one person is replaced, the target described above. Every other person keeps their own original face, hair and body. The replacement identity must never appear on two people.';
-const NO_TEXT='NO ON-SCREEN TEXT: the output video must contain no subtitles, captions, lyrics, titles, stickers, emojis, usernames, watermarks or logos at any moment, even if @vid1 shows them. Never write the spoken words or the audio as text on screen. This rule is only about text overlays; it does not change who is replaced.';
+const NO_TEXT='NO ON-SCREEN TEXT (final check, overrides everything above): the output video must contain no subtitles, captions, lyrics, titles, stickers, emojis, usernames, watermarks or logos at any moment, not even for a single frame, even if @vid1 shows them. Never write the spoken words or the audio as text on screen. Where @vid1 has text, show the clean scene behind it. This rule is only about text overlays; it does not change who is replaced.';
+const NO_TEXT_START='ABSOLUTE RULE — NO TEXT: The source video may contain burned-in subtitles, captions or other text. They are NOT part of the scene and must NOT appear in the output. Generate a clean video with no text of any kind on screen, in any frame.';
+const NO_TEXT_IMAGE='NO TEXT IN THE IMAGE (final check, overrides everything above): the edited frame must contain no subtitles, captions, words, usernames, watermarks, logos, emojis or stickers, even if Image 1 shows them. Reconstruct the clean scene behind any text. Only print that is part of a garment may remain.';
 const OUTFIT_DEFAULT='OUTFIT CHANGE (overrides any instruction to keep, preserve or copy the original clothing): the replaced person wears the specific outfit below instead of the original clothing. {{outfit}} Reproduce the garments faithfully: cut, color, fabric, pattern and fit, adapted naturally to the body and pose. Do not change identity, pose, background or lighting because of the outfit. People who are not replaced keep their own clothes.';
 function outfitOf(b,s){const o=(s&&s.outfit)||(b&&b.outfit);if(!o||typeof o!=='object')return null;const text=typeof o.text==='string'?o.text.trim().slice(0,500):'',mediaId=typeof o.mediaId==='string'?o.mediaId:'';if(!text&&!mediaId)return null;return {text,mediaId,prompt:typeof o.prompt==='string'&&o.prompt.trim()?o.prompt.trim().slice(0,4000):OUTFIT_DEFAULT};}
 function outfitPrompt(o,ref){return o.prompt.replaceAll('{{outfit}}',[ref,o.text?'Outfit description: '+o.text+'.':''].filter(Boolean).join(' '));}
@@ -132,6 +134,7 @@ async function buildFrameEdit(owner,b,s,cast,target,modelId){
   }
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';const oi=await outfitImage(owner,outfit);if(oi){photoUrls.push(oi);ref='The outfit is shown in Image '+(photoUrls.length+1)+'.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
+  prompt+='\n\n'+NO_TEXT_IMAGE;
   if(prompt.length>20000)throw error(400,'Reduza o prompt de edicao.');
   const frameRatio=['1:1','2:3','3:2','3:4','4:3','7:9','9:7','9:16','16:9','21:9'].includes(s.frameRatio)?s.frameRatio:'9:16';
   return {prompt,image_urls:[await signedMedia(owner,frame.path),...photoUrls],resolution:'1k',aspect_ratio:frameRatio,prompt_extend:false,enable_thinking:false};
@@ -172,7 +175,7 @@ async function buildVideo(owner,key,b,s,j,frameImageUrl){
   const outfit=outfitOf(b,s);
   if(outfit){let ref='';if(frameImageUrl){ref='The outfit is already applied in @img1 (the edited frame). Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else{const oi=await outfitImage(owner,outfit);if(oi){imageUrls.push(oi);ref='The outfit is shown in @img'+imageUrls.length+'. Keep exactly that outfit for the whole video and ignore the clothing seen in @vid1.';}else ref='Ignore the clothing seen in @vid1 and keep this outfit for the whole video.';}prompt+='\n\n'+outfitPrompt(outfit,ref);}
   if(smode==='frame')prompt+='\n\n'+ONE_ONLY;
-  if(smode==='frame'||smode==='multi')prompt+='\n\n'+NO_TEXT;
+  prompt=NO_TEXT_START+'\n\n'+prompt+'\n\n'+NO_TEXT;
  if(prompt.length>20000)throw error(400,'A soma dos prompts ultrapassa 20.000 caracteres.');
   let audioUrl=null;
   if(typeof media.audioPath==='string'){
