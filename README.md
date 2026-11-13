@@ -24,4 +24,4 @@ node scripts/preview-tests.mjs    # prévia com dados falsos e os mesmos cabeça
 
 - Migrações `supabase/migrations/share-links.sql` e `storage-quota.sql` (aplicar primeiro em desenvolvimento; ver comentários no topo de cada uma). Sem elas: "Copiar link" mostra aviso e a cota não vale no Supabase.
 - Links antigos (URL direta do R2, até 7 dias) expiram sozinhos; para cortar antes, girar a chave do R2.
-- Este código não está no GitHub; publicar a partir da branch `main` antiga desfaz estas correções e a marcação por clique.
+- A Vercel está ligada ao GitHub: todo push na `main` publica em produção automaticamente. A `main` é a única fonte de produção (atualizada em 13/11/2026); teste em outra branch e só junte na `main` o que já foi conferido na prévia.
