@@ -4,7 +4,7 @@
   function q(s){return document.querySelector(s);}
   function mk(t,x,c){var e=document.createElement(t);if(x!=null)e.textContent=x;if(c)e.className=c;return e;}
   function say(m){try{toast(m);}catch(e){}}
-  var KEY='fs-queue2',RATE={'480p':.05,'720p':.10,'1080p':.20},IMG=['image/png','image/jpeg','image/webp'];
+  var KEY='fs-queue2',RATE=window.FS_RATES,IMG=['image/png','image/jpeg','image/webp'];
   var queue=[];
   try{(JSON.parse(localStorage.getItem(KEY)||'[]')||[]).forEach(function(x){if(x&&x.mediaId){x.state='ready';queue.push(x);}});}catch(e){queue=[];}
   /* guarda o arquivo de cada vídeo pronto no navegador (IndexedDB), para a fila restaurada continuar completa */

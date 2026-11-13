@@ -317,6 +317,8 @@
   css.textContent = '.meta-badge{font-size:12px;font-weight:600}.meta-badge.ok{color:#1f9d55}.meta-badge.warn{color:#d97706}';
   document.head.append(css);
   function badges() {
+    const grid = document.getElementById('lib-grid');
+    if (document.hidden || !grid || !grid.offsetParent) return;
     document.querySelectorAll('#lib-grid .lib-card').forEach(card => {
       const it = card.__it, j = it && it.j, info = card.querySelector('.lib-info');
       if (!j || !info) return;

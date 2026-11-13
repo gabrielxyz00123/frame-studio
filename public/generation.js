@@ -1,88 +1,1327 @@
-function money(n){return 'US$ '+n.toFixed(3).replace('.',',');}
-function rateText(n){return 'US$ '+n.toFixed(2).replace('.',',');}
-const RATES={'480p':.05,'720p':.10,'1080p':.20};
-function previewCostText(){const res=$('#resolution').value,rate=RATES[res]||.05,dv=Number($('#duration').value)||0,t=trimSettings(),out=dv||(t.enabled&&Number.isFinite(t.length)&&t.length>=1?Math.max(2,Math.floor(t.length)):5),n=Math.max(1,Number($('#outputs').value)||1);if(t.enabled&&Number.isFinite(t.length)&&t.length>=1){const per=(t.length+out)*rate;return 'Estimativa por vídeo: '+money(per)+' = ('+t.length+' s de origem cortada + '+out+' s de saída) × '+rateText(rate)+'/s em '+res+(n>1?' · '+n+' saídas: '+money(per*n):'')+'. Adicione os vídeos para o cálculo exato.';}return 'O vídeo de origem também é cobrado por segundo: por vídeo, (segundos da origem + '+out+' s de saída) × '+rateText(rate)+'/s em '+res+'. Ex.: origem de 5 s = '+money((5+out)*rate)+'. Adicione os vídeos para calcular.';}
-function askConfirm(text,okLabel){return new Promise(resolve=>{const d=document.getElementById('confirm-dialog');document.getElementById('confirm-text').textContent=text;document.getElementById('confirm-ok').textContent=okLabel||'Confirmar';d.returnValue='';d.addEventListener('close',()=>resolve(d.returnValue==='ok'),{once:true});d.showModal();});}
-function trimSettings(){const on=!!document.getElementById('trim-on')?.checked,start=Number(document.getElementById('trim-start')?.value),length=Number(document.getElementById('trim-length')?.value);return {enabled:on,start:on?start:0,length:on?length:0};}
-function trimStart(){const t=trimSettings();return t.enabled&&Number.isFinite(t.start)?t.start+.001:.001;}
-let sessionHFKey='',testConnected=false,productionBusy=false,activeBatch=null,pauseRequested=false,reviewedFrame=null;
-const statusNames={queued:'Na fila',in_progress:'Gerando',completed:'Concluído',failed:'Falhou',nsfw:'Recusado pelo provedor',canceled:'Cancelado'};
-const terminalStatuses=['completed','failed','nsfw','canceled'];
+function money(n) {
+  return 'US$ ' + n.toFixed(3).replace('.', ',');
+}
+function rateText(n) {
+  return 'US$ ' + n.toFixed(2).replace('.', ',');
+}
+const RATES = window.FS_RATES;
+function previewCostText() {
+  const res = $('#resolution').value,
+    rate = RATES[res] || 0.05,
+    dv = Number($('#duration').value) || 0,
+    t = trimSettings(),
+    out = dv || (t.enabled && Number.isFinite(t.length) && t.length >= 1 ? Math.max(2, Math.floor(t.length)) : 5),
+    n = Math.max(1, Number($('#outputs').value) || 1);
+  if (t.enabled && Number.isFinite(t.length) && t.length >= 1) {
+    const per = (t.length + out) * rate;
+    return (
+      'Estimativa por vídeo: ' +
+      money(per) +
+      ' = (' +
+      t.length +
+      ' s de origem cortada + ' +
+      out +
+      ' s de saída) × ' +
+      rateText(rate) +
+      '/s em ' +
+      res +
+      (n > 1 ? ' · ' + n + ' saídas: ' + money(per * n) : '') +
+      '. Adicione os vídeos para o cálculo exato.'
+    );
+  }
+  return (
+    'O vídeo de origem também é cobrado por segundo: por vídeo, (segundos da origem + ' +
+    out +
+    ' s de saída) × ' +
+    rateText(rate) +
+    '/s em ' +
+    res +
+    '. Ex.: origem de 5 s = ' +
+    money((5 + out) * rate) +
+    '. Adicione os vídeos para calcular.'
+  );
+}
+function askConfirm(text, okLabel) {
+  return new Promise((resolve) => {
+    const d = document.getElementById('confirm-dialog');
+    document.getElementById('confirm-text').textContent = text;
+    document.getElementById('confirm-ok').textContent = okLabel || 'Confirmar';
+    d.returnValue = '';
+    d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
+    d.showModal();
+  });
+}
+/* Substitui window.prompt: pede um texto num diálogo do próprio app.
+   Resolve com o texto digitado, ou null se cancelar. Com readOnly, só mostra o texto selecionado para copiar. */
+function askText(title, value, okLabel, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog'),
+      f = document.createElement('form'),
+      head = document.createElement('div'),
+      h = document.createElement('h2'),
+      input = document.createElement('input'),
+      row = document.createElement('div'),
+      cancel = document.createElement('button'),
+      ok = document.createElement('button');
+    f.method = 'dialog';
+    head.className = 'panel-title';
+    h.textContent = title;
+    head.append(h);
+    input.type = 'text';
+    input.value = value || '';
+    input.setAttribute('aria-label', title);
+    input.style.cssText = 'width:100%;box-sizing:border-box;margin:8px 0 14px';
+    if (opts.maxLength) input.maxLength = opts.maxLength;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    if (opts.readOnly) input.readOnly = true;
+    row.className = 'row-actions';
+    cancel.type = 'submit';
+    cancel.value = 'cancel';
+    cancel.className = 'secondary';
+    cancel.textContent = opts.readOnly ? 'Fechar' : 'Cancelar';
+    ok.type = 'submit';
+    ok.value = 'ok';
+    ok.className = 'primary';
+    ok.textContent = okLabel || 'Salvar';
+    row.append(cancel);
+    if (!opts.readOnly) row.append(ok);
+    f.append(head, input, row);
+    d.append(f);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        d.close(opts.readOnly ? 'cancel' : 'ok');
+      }
+    });
+    d.addEventListener(
+      'close',
+      () => {
+        const v = d.returnValue === 'ok' ? input.value : null;
+        d.remove();
+        resolve(v);
+      },
+      { once: true },
+    );
+    document.body.append(d);
+    d.showModal();
+    input.focus();
+    input.select();
+  });
+}
+function trimSettings() {
+  const on = !!document.getElementById('trim-on')?.checked,
+    start = Number(document.getElementById('trim-start')?.value),
+    length = Number(document.getElementById('trim-length')?.value);
+  return { enabled: on, start: on ? start : 0, length: on ? length : 0 };
+}
+function trimStart() {
+  const t = trimSettings();
+  return t.enabled && Number.isFinite(t.start) ? t.start + 0.001 : 0.001;
+}
+let sessionHFKey = '',
+  testConnected = false,
+  productionBusy = false,
+  activeBatch = null,
+  pauseRequested = false,
+  reviewedFrame = null;
+const statusNames = {
+  queued: 'Na fila',
+  in_progress: 'Gerando',
+  completed: 'Concluído',
+  failed: 'Falhou',
+  nsfw: 'Recusado pelo provedor',
+  canceled: 'Cancelado',
+};
+const terminalStatuses = ['completed', 'failed', 'nsfw', 'canceled'];
 /* Assina o endereço do vídeo pelo servidor (que sabe se está no R2 ou no Supabase).
    Se o servidor não achar o arquivo no R2, volta a assinar direto pelo Supabase (vídeos antigos). */
-async function storageSignedUrl(path,secs,downloadName){
- try{const {data:{session}}=await studioClient.auth.getSession();if(session){const r=await fetch('/api/storage?action=get',{method:'POST',headers:{Authorization:'Bearer '+session.access_token,'Content-Type':'application/json'},body:JSON.stringify({path,secs,download:downloadName||undefined})});if(r.ok){const j=await r.json();if(j&&j.url)return j.url;}}}catch(e){}
- const o=downloadName?{download:downloadName}:undefined,sb=await studioClient.storage.from('frame-private').createSignedUrl(path,secs,o);if(sb.error)throw sb.error;return sb.data.signedUrl;
+async function storageSignedUrl(path, secs, downloadName) {
+  try {
+    const {
+      data: { session },
+    } = await studioClient.auth.getSession();
+    if (session) {
+      const r = await fetch('/api/storage?action=get', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, secs, download: downloadName || undefined }),
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.url) return j.url;
+      }
+    }
+  } catch (e) {}
+  const o = downloadName ? { download: downloadName } : undefined,
+    sb = await studioClient.storage.from('frame-private').createSignedUrl(path, secs, o);
+  if (sb.error) throw sb.error;
+  return sb.data.signedUrl;
 }
-window.fsSignedUrl=storageSignedUrl;
+window.fsSignedUrl = storageSignedUrl;
 /* Aviso vermelho em tela para falhas de geração (ex.: sem créditos na Higgsfield). */
-function fsAlert(title,msg){
- let ov=document.getElementById('fs-alert');
- if(!ov){
-  const st=document.createElement('style');
-  st.textContent='#fs-alert{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55)}#fs-alert[hidden]{display:none}#fs-alert .fa-box{width:min(480px,100%);background:#fff;color:#2a1210;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden;font:15px/1.5 system-ui,sans-serif}#fs-alert .fa-head{background:#d32f2f;color:#fff;padding:14px 18px;font-weight:700;font-size:17px}#fs-alert .fa-body{padding:18px;white-space:pre-line;overflow-wrap:anywhere;max-height:50vh;overflow:auto}#fs-alert .fa-foot{padding:0 18px 18px;display:flex;justify-content:flex-end}#fs-alert button{background:#d32f2f;color:#fff;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}#fs-alert button:focus-visible{outline:3px solid #ffb4ab;outline-offset:2px}';
-  document.head.append(st);
-  ov=document.createElement('div');ov.id='fs-alert';ov.hidden=true;ov.setAttribute('role','alertdialog');ov.setAttribute('aria-modal','true');ov.setAttribute('aria-labelledby','fs-alert-title');ov.setAttribute('aria-describedby','fs-alert-msg');
-  const box=document.createElement('div');box.className='fa-box';
-  const h=document.createElement('div');h.className='fa-head';h.id='fs-alert-title';
-  const b=document.createElement('div');b.className='fa-body';b.id='fs-alert-msg';
-  const f=document.createElement('div');f.className='fa-foot';
-  const ok=document.createElement('button');ok.type='button';ok.textContent='Entendi';ok.id='fs-alert-ok';
-  const close=()=>{ov.hidden=true;};
-  ok.onclick=close;ov.addEventListener('click',e=>{if(e.target===ov)close();});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!ov.hidden)close();});
-  f.append(ok);box.append(h,b,f);ov.append(box);document.body.append(ov);
- }
- ov.querySelector('.fa-head').textContent=title;
- ov.querySelector('.fa-body').textContent=msg;
- ov.hidden=false;
- try{ov.querySelector('#fs-alert-ok').focus();}catch(e){}
+function fsAlert(title, msg) {
+  let ov = document.getElementById('fs-alert');
+  if (!ov) {
+    const st = document.createElement('style');
+    st.textContent =
+      '#fs-alert{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(0,0,0,.55)}#fs-alert[hidden]{display:none}#fs-alert .fa-box{width:min(480px,100%);background:#fff;color:#2a1210;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden;font:15px/1.5 system-ui,sans-serif}#fs-alert .fa-head{background:#d32f2f;color:#fff;padding:14px 18px;font-weight:700;font-size:17px}#fs-alert .fa-body{padding:18px;white-space:pre-line;overflow-wrap:anywhere;max-height:50vh;overflow:auto}#fs-alert .fa-foot{padding:0 18px 18px;display:flex;justify-content:flex-end}#fs-alert button{background:#d32f2f;color:#fff;border:0;border-radius:8px;padding:10px 22px;font:inherit;font-weight:600;cursor:pointer}#fs-alert button:focus-visible{outline:3px solid #ffb4ab;outline-offset:2px}';
+    document.head.append(st);
+    ov = document.createElement('div');
+    ov.id = 'fs-alert';
+    ov.hidden = true;
+    ov.setAttribute('role', 'alertdialog');
+    ov.setAttribute('aria-modal', 'true');
+    ov.setAttribute('aria-labelledby', 'fs-alert-title');
+    ov.setAttribute('aria-describedby', 'fs-alert-msg');
+    const box = document.createElement('div');
+    box.className = 'fa-box';
+    const h = document.createElement('div');
+    h.className = 'fa-head';
+    h.id = 'fs-alert-title';
+    const b = document.createElement('div');
+    b.className = 'fa-body';
+    b.id = 'fs-alert-msg';
+    const f = document.createElement('div');
+    f.className = 'fa-foot';
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.textContent = 'Entendi';
+    ok.id = 'fs-alert-ok';
+    const close = () => {
+      ov.hidden = true;
+    };
+    ok.onclick = close;
+    ov.addEventListener('click', (e) => {
+      if (e.target === ov) close();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !ov.hidden) close();
+    });
+    f.append(ok);
+    box.append(h, b, f);
+    ov.append(box);
+    document.body.append(ov);
+  }
+  ov.querySelector('.fa-head').textContent = title;
+  ov.querySelector('.fa-body').textContent = msg;
+  ov.hidden = false;
+  try {
+    ov.querySelector('#fs-alert-ok').focus();
+  } catch (e) {}
 }
-function notifyError(msg){
- const m=String(msg||'Erro desconhecido.');
- if(/credit balance|saldo|cr[eé]dito/i.test(m))return fsAlert('Saldo insuficiente na Higgsfield','Seus créditos na Higgsfield acabaram. Adicione créditos e tente de novo.\n\n'+m);
- if(/n[aã]o concluiu|falhou|recusad|cancelad|rate limit|limite/i.test(m))return fsAlert('A geração falhou',m);
- toast(m);
+function notifyError(msg) {
+  const m = String(msg || 'Erro desconhecido.');
+  if (/credit balance|saldo|cr[eé]dito/i.test(m))
+    return fsAlert(
+      'Saldo insuficiente na Higgsfield',
+      'Seus créditos na Higgsfield acabaram. Adicione créditos e tente de novo.\n\n' + m,
+    );
+  if (/n[aã]o concluiu|falhou|recusad|cancelad|rate limit|limite/i.test(m)) return fsAlert('A geração falhou', m);
+  toast(m);
 }
-window.fsAlert=fsAlert;
-async function testAPI(action,body){const {data:{session}}=await studioClient.auth.getSession();if(!session)throw Error('Entre na sua conta.');const r=await fetch('/api/higgsfield?action='+action,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+session.access_token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify({...body,...(sessionHFKey?{credentials:body.credentials||sessionHFKey}:{})}):undefined});const d=await r.json();if(!r.ok)throw Object.assign(Error(d.error||'Falha na comunicação.'),{status:r.status});return d;}
-async function patchRecord(id,data){const r=await studioClient.from('frame_library').update({data}).eq('id',id).select('id');if(r.error||!r.data?.length)throw Error('Falha ao salvar o acompanhamento.');}
-async function checkConnection(){try{testConnected=sessionHFKey?true:(await testAPI('config')).configured;$('#hf-disconnect').hidden=!testConnected;$('#connection-state').textContent=testConnected?'Higgsfield conectada à sua conta. Três fluxos disponíveis.':'Conecte sua chave completa.';document.querySelector('.status').textContent=testConnected?'Higgsfield conectada':'Integração pendente';if(testConnected&&$('#test-state').textContent.startsWith('Conecte'))$('#test-state').textContent='Conexão pronta. Consulte o preço e confirme a geração.';}catch(e){testConnected=false;$('#connection-state').textContent=e.message;}updateTest();}
-async function videoMetadata(file){if(file.studioMetadata)return file.studioMetadata;return new Promise((resolve,reject)=>{const v=document.createElement('video'),url=URL.createObjectURL(file),timer=setTimeout(()=>done(Error('Não foi possível ler o vídeo.')),15000);function done(e){clearTimeout(timer);URL.revokeObjectURL(url);v.removeAttribute('src');v.load();e?reject(e):resolve(file.studioMetadata);}v.preload='metadata';v.onloadedmetadata=()=>{file.studioMetadata={duration:v.duration,width:v.videoWidth,height:v.videoHeight};done(Number.isFinite(v.duration)?null:Error('Vídeo inválido.'));};v.onerror=()=>done(Error('Use MP4 válido.'));v.src=url;});}
-async function extractFrame(file,at=.001){return new Promise((resolve,reject)=>{const v=document.createElement('video'),url=URL.createObjectURL(file);let ended=false;const timer=setTimeout(()=>finish(Error('Falha ao extrair quadro.')),20000);function finish(e,r){if(ended)return;ended=true;clearTimeout(timer);URL.revokeObjectURL(url);v.removeAttribute('src');v.load();e?reject(e):resolve(r);}v.preload='auto';v.muted=true;v.onloadeddata=()=>{v.currentTime=Math.min(at,Math.max(0,(v.duration||at)-.05));};v.onseeked=()=>{try{const c=document.createElement('canvas'),scale=Math.min(1,1920/Math.max(v.videoWidth,v.videoHeight));c.width=Math.round(v.videoWidth*scale);c.height=Math.round(v.videoHeight*scale);c.getContext('2d').drawImage(v,0,0,c.width,c.height);c.toBlob(blob=>blob?finish(null,{blob,width:c.width,height:c.height}):finish(Error('Quadro inválido.')),'image/png');}catch(e){finish(e);}};v.onerror=()=>finish(Error('Falha ao abrir vídeo.'));v.src=url;});}
-async function uploadMedia(blob,name,extra={}){const {data:{user}}=await studioClient.auth.getUser();if(!user)throw Error('Entre novamente.');const path=user.id+'/'+crypto.randomUUID(),r=await studioClient.storage.from('frame-private').upload(path,blob,{contentType:blob.type,upsert:false});if(r.error)throw r.error;return studioApi('POST',{kind:'media',data:{path,name,size:blob.size,type:blob.type,...extra}});}
-async function pollRequest(job,progress){for(;;){if(!testConnected)throw Error('Reconecte a chave para acompanhar.');const result=await testAPI('status',job);progress?.(result);if(terminalStatuses.includes(result.status))return result;await new Promise(r=>setTimeout(r,7000));}}
-function frameSignature(){return JSON.stringify([files[0]?.id,$('#model').value,$('#frame-edit-prompt').value,$('#target-person').value,$('#ratio').value,trimStart(),window.fsOutfit?window.fsOutfit.signature():'']);}
-function showFrame(url,caption){const img=el('img');img.src=url;img.alt=caption;$('#frame-preview').replaceChildren(img,el('p',caption));}
-function frameRatio(meta){if($('#ratio').value!=='adaptive')return $('#ratio').value;const r=meta.width/meta.height;return ['1:1','3:4','4:3','9:16','16:9'].sort((a,b)=>Math.abs(evalRatio(a)-r)-Math.abs(evalRatio(b)-r))[0];}
-function evalRatio(s){const [a,b]=s.split(':').map(Number);return a/b;}
-async function editSource(context,source,save){if(source.frameJob?.status==='completed')return source.frameJob;if(!source.frameJob){source.frameJob={attemptId:crypto.randomUUID(),status:'prepared'};await save();}const job=source.frameJob;if(['uncertain','submitting'].includes(job.status)&&!job.requestId)throw Error('Confira em Requests se a edição foi recebida antes de reenviar.');if(terminalStatuses.includes(job.status))throw Error('A edição do quadro falhou. Prepare um novo lote após revisar.');if(!job.requestId){job.status='submitting';await save();try{Object.assign(job,await testAPI('edit-frame',{productionId:context.id,leaseToken:context.leaseToken,attemptId:job.attemptId,modelId:context.modelId,frameMediaId:source.originalFrameId,editPrompt:context.editPrompt,target:context.target,outfit:context.outfit,ratio:source.frameRatio}));await save();}catch(e){job.status=e.status&&e.status<500?'failed':'uncertain';job.error=e.message;await save();throw e;}}Object.assign(job,await pollRequest(job,r=>$('#frame-state').textContent='Edição do quadro: '+r.status));await save();if(!job.imageUrl)throw Error('A edição não retornou uma imagem.');return job;}
-$('#frame-method').onchange=()=>{$('#auto-frame-options').hidden=$('#frame-method').value!=='auto';$('#manual-frame-options').hidden=$('#frame-method').value!=='manual';updateTest();};
-$('#edited-frame').addEventListener('change',()=>{const f=$('#edited-frame').files[0];if(f&&f.type.startsWith('image/'))showFrame(URL.createObjectURL(f),'Quadro editado enviado por você');});
-$('#preview-frame').onclick=async()=>{try{if(files.length!==1)throw Error('Selecione um vídeo para revisar o quadro.');const f=await extractFrame(files[0].file,trimStart()),url=URL.createObjectURL(f.blob);showFrame(url,'Quadro original · ainda sem edição');}catch(e){toast(e.message);}};
-$('#edit-frame-now').onclick=async()=>{if(productionBusy)return;try{if(!testConnected||files.length!==1||!$('#model').value)throw Error('Conecte a Higgsfield e escolha uma modelo e um vídeo.');if(!await askConfirm('Editar 1 quadro com Qwen Image 3 na Higgsfield por aproximadamente US$ 0,04? A imagem do vídeo e a foto da modelo serão compartilhadas. Nenhum vídeo será gerado nesta etapa.'))return;productionBusy=true;updateTest();$('#edit-frame-now').disabled=true;const signature=frameSignature(),frame=await extractFrame(files[0].file,trimStart()),original=await uploadMedia(frame.blob,'primeiro-quadro.png'),context={modelId:$('#model').value,editPrompt:$('#frame-edit-prompt').value.trim(),target:$('#target-person').value.trim(),outfit:window.fsOutfit&&window.fsOutfit.on()?await window.fsOutfit.upload():undefined},source={originalFrameId:original.id,frameRatio:frameRatio(frame)},record=await studioApi('POST',{kind:'generation',data:{jobType:'frame-review',...context,...source}});const job=await editSource(context,source,()=>patchRecord(record.id,{jobType:'frame-review',...context,...source}));reviewedFrame={signature,job};showFrame(job.imageUrl,'Quadro editado · referência visual para o vídeo');$('#frame-state').textContent='Revise a identidade antes de gerar.';}catch(e){$('#frame-state').textContent=e.message;}finally{productionBusy=false;$('#edit-frame-now').disabled=false;updateTest();}};
-let castRows=[{modelId:'',target:''}];
-function renderCast(){const root=$('#cast-list');root.replaceChildren();castRows.forEach((row,i)=>{const box=el('div',null,'cast-row'),select=el('select'),input=el('input');select.setAttribute('aria-label','Modelo da pessoa '+(i+1));select.add(new Option('Selecione uma modelo',''));models.forEach(m=>select.add(new Option(m.name,m.id)));select.value=row.modelId;select.onchange=()=>{row.modelId=select.value;updateTest();};input.setAttribute('aria-label','Identificar pessoa '+(i+1));input.maxLength=200;input.value=row.target;input.placeholder=i?'a mulher à direita, de camisa azul':'a mulher à esquerda, de blusa branca';input.onchange=()=>{row.target=input.value;updateTest();};const remove=el('button','Remover','secondary');remove.type='button';remove.disabled=castRows.length<=1;remove.onclick=()=>{castRows.splice(i,1);renderCast();};box.append(el('strong','Pessoa '+(i+1)),select,el('label','Quem será trocado no vídeo? Descreva em português a posição, o cabelo e a roupa.'),input,remove);root.append(box);});$('#add-person').disabled=castRows.length>=4;}
-$('#add-person').onclick=()=>{if(castRows.length<4){castRows.push({modelId:'',target:''});renderCast();}};
-async function capturePlan(){if(!loaded)throw Error('Aguarde a biblioteca.');if(window.fsOutfit)window.fsOutfit.check();if(!files.length||files.length>300)throw Error('Adicione de 1 a 300 vídeos.');const outputs=Number($('#outputs').value),duration=Number($('#duration').value);if(!Number.isInteger(outputs)||outputs<files.length||outputs>300)throw Error('Escolha entre '+files.length+' e 300 saídas.');if(!Number.isInteger(duration)||duration<0||duration===1||duration>15)throw Error('Duração: automática ou de 2 a 15 segundos.');const p={mode,outputs,duration,resolution:$('#resolution').value,ratio:$('#ratio').value,target:$('#target-person').value.trim(),directPrompt:$('#prompt-direct').value.trim(),framePrompt:$('#prompt-frame').value.trim()||defaultFramePrompt,multiPrompt:$('#prompt-multi').value.trim()||defaultMultiPrompt,basePrompt:$('#prompt-base').value.trim(),editPrompt:$('#frame-edit-prompt').value.trim()||defaultImagePrompt,frameMethod:$('#frame-method').value,cast:castRows.map(x=>({...x,target:x.target.trim()})),engine:'Wan 3.0',generateAudio:true,trim:trimSettings()};if(mode==='multi'){if(p.cast.length<1||p.cast.length>4||p.cast.some(x=>!x.target||!models.some(m=>m.id===x.modelId))||new Set(p.cast.map(x=>x.target.toLowerCase())).size!==p.cast.length)throw Error('Associe uma modelo e uma descrição distinta a cada pessoa.');if(/\{\{identity\}\}|\{\{target\}\}/.test(p.basePrompt))throw Error('Múltiplas pessoas: o prompt base deve conter apenas regras comuns, sem {{identity}} ou {{target}}.');p.modelName=p.cast.map(x=>models.find(m=>m.id===x.modelId).name).join(' + ');}else{const m=models.find(m=>m.id===$('#model').value);if(!m)throw Error('Escolha uma modelo.');p.modelId=m.id;p.modelName=m.name;if(mode==='direct'&&!p.directPrompt)throw Error('Preencha o prompt de troca direta.');}p.files=[];const trim=p.trim;if(trim.enabled&&(!Number.isFinite(trim.start)||trim.start<0||!Number.isFinite(trim.length)||trim.length<1||trim.length>15))throw Error('Corte: o início deve ser 0 ou mais e o trecho de 1 a 15 segundos.');for(const x of files){const meta=await videoMetadata(x.file);if(trim.enabled){if(!x.file.type.startsWith('video/')||x.file.size>500*1048576)throw Error(x.file.name+': use um vídeo de até 500 MB para cortar.');if(!(meta.duration>trim.start+.5))throw Error(x.file.name+': o início do corte ('+trim.start+' s) passa do fim do vídeo, que tem '+meta.duration.toFixed(1)+' s.');const used=Math.min(trim.length,meta.duration-trim.start);p.files.push({fileId:x.id,name:x.file.name,size:x.file.size,type:'video/mp4',...meta,sourceDuration:meta.duration,duration:Math.max(1,Math.round(used*10)/10)});}else{if(x.file.type!=='video/mp4'||x.file.size>100*1048576||meta.duration<1||meta.duration>15)throw Error(x.file.name+': use MP4 de 1 a 15 segundos, até 100 MB, ou ative o corte.');p.files.push({fileId:x.id,name:x.file.name,size:x.file.size,type:x.file.type,...meta});}}for(const f of p.files)f.out=duration||Math.max(2,Math.min(15,Math.floor(f.duration)));if([p.directPrompt,p.framePrompt,p.multiPrompt,p.basePrompt,p.editPrompt].some(x=>x.length>20000))throw Error('Use até 20.000 caracteres por prompt.');if(p.mode!=='multi'&&(p.basePrompt.length+(p[p.mode+'Prompt']||'').length+String(models.find(m=>m.id===p.modelId)?.identity||'').length)>19000)throw Error('Reduza os prompts e características: limite combinado próximo de 20.000 caracteres.');if(mode==='frame'&&p.frameMethod==='manual'){const f=$('#edited-frame').files[0];if(!f||!['image/png','image/jpeg','image/webp'].includes(f.type)||f.size>4*1048576)throw Error('Envie o quadro editado em PNG, JPEG ou WebP, até 4 MB.');}const rate={'480p':.05,'720p':.10,'1080p':.20}[p.resolution];p.rate=rate;p.billedSource=Array.from({length:outputs},(_,i)=>Math.ceil(p.files[i%p.files.length].duration)).reduce((a,b)=>a+b,0);p.billedOutput=Array.from({length:outputs},(_,i)=>p.files[i%p.files.length].out).reduce((a,b)=>a+b,0);p.estimatedVideoCost=Array.from({length:outputs},(_,i)=>(Math.ceil(p.files[i%p.files.length].duration)+p.files[i%p.files.length].out)*rate).reduce((a,b)=>a+b,0);p.estimatedImageCost=mode==='frame'&&p.frameMethod==='auto'?(p.files.length-(reviewedFrame?.signature===frameSignature()&&files.length===1?1:0))*.04:0;p.estimatedCost=p.estimatedVideoCost+p.estimatedImageCost;return p;}
-let estimateVersion=0;
-async function updateTest(){$('#batch-form').inert=productionBusy;const version=++estimateVersion;$('#generate-test').disabled=$('#estimate-account').disabled=!testConnected||productionBusy;$('#generate-test').textContent=productionBusy?'Processando…':'Gerar '+($('#outputs').value||1)+' vídeo(s)';try{const p=await capturePlan();if(version!==estimateVersion)return;const box=$('#test-cost');box.className='cost-box';const lines=Array.from({length:Math.min(p.outputs,6)},(_,i)=>{const pf=p.files[i%p.files.length],src=Math.ceil(pf.duration);return 'Geração '+(i+1)+': ('+src+' s de origem + '+pf.out+' s de saída) × '+rateText(p.rate)+'/s ('+p.resolution+') = '+money((src+pf.out)*p.rate);});if(p.outputs>6)lines.push('… e mais '+(p.outputs-6)+' geração(ões).');box.style.whiteSpace='pre-line';box.textContent='Estimativa sem desconto: '+money(p.estimatedCost)+' no total · '+p.outputs+' saída(s)'+(p.estimatedImageCost?' · inclui '+money(p.estimatedImageCost)+' de edição de quadros':'')+'\n'+lines.join('\n')+'\nValor pela tabela pública, sem desconto; a cobrança final é da Higgsfield.';}catch(e){if(version===estimateVersion){const box=$('#test-cost');if(loaded&&!files.length){box.className='cost-box preview';box.textContent=previewCostText();}else{box.className='';box.textContent=e.message;}$('#generate-test').disabled=$('#estimate-account').disabled=true;}}}
-async function archiveJob(job){try{Object.assign(job,await testAPI('archive',job));job.archiveError='';}catch(e){job.archiveError=e.message;}}
-async function saveProduction(b){const {id,created,kind,deleted,...data}=b;const saved=await studioClient.rpc('frame_save_production',{p_id:id,p_payload:data,p_token:b.leaseToken||null});if(saved.error||!saved.data)throw Error('Lote ocupado em outra sessão ou acesso expirado.');const i=batches.findIndex(x=>x.id===id);if(i<0)batches.unshift(b);else batches[i]=b;renderBatches();}
-async function prepareProduction(plan){const sourceFiles=[...files],manual=$('#edited-frame').files[0],review=reviewedFrame?.signature===frameSignature()&&files.length===1?reviewedFrame:null;const b=await studioApi('POST',{kind:'batch',data:{...plan,status:'uploading',productionStatus:'Preparando arquivos',sources:[],jobs:[]}});if(window.fsOutfit&&window.fsOutfit.on())b.outfit=await window.fsOutfit.upload();await saveProduction(b);let manualId;if(plan.mode==='frame'&&plan.frameMethod==='manual')manualId=(await uploadMedia(manual,manual.name)).id;for(const [fi,f] of plan.files.entries()){const file=sourceFiles.find(x=>x.id===f.fileId).file;let upload=file;genProgress.prep(fi,plan.files.length,'Preparando '+f.name,0);if(plan.trim?.enabled){$('#test-state').textContent='Cortando '+f.name+' ('+f.duration+' s)…';upload=await window.trimVideo(file,plan.trim.start,plan.trim.length,pr=>{$('#test-state').textContent='Cortando '+f.name+' · '+Math.round(pr*100)+'%';genProgress.prep(fi,plan.files.length,'Cortando '+f.name,pr*.7);});}$('#test-state').textContent='Enviando '+f.name+' à biblioteca privada…';genProgress.prep(fi,plan.files.length,'Enviando '+f.name,plan.trim?.enabled?.7:.1);const source={...f,mediaId:(await uploadMedia(upload,f.name,{duration:f.duration})).id};genProgress.prep(fi,plan.files.length,'Enviado '+f.name,1);if(plan.mode==='frame'){if(manualId)source.frameMediaId=manualId;else if(review)source.frameJob=review.job;else{const frame=await extractFrame(file,plan.trim?.enabled?plan.trim.start+.001:.001);source.originalFrameId=(await uploadMedia(frame.blob,'quadro-'+f.name+'.png')).id;source.frameRatio=frameRatio(frame);}}b.sources.push(source);await saveProduction(b);}b.jobs=Array.from({length:plan.outputs},(_,i)=>({attemptId:crypto.randomUUID(),sourceIndex:i%b.sources.length,variation:Math.floor(i/b.sources.length)+1,status:'prepared'}));b.status='ready';b.productionStatus='Pronto para gerar';await saveProduction(b);return b;}
-async function runProduction(b){if(productionBusy)return;if(Number(b.duration)>15)throw Error('Este lote antigo ultrapassa 15 segundos. Prepare um novo lote com duração de até 15 segundos.');if(!navigator.locks)throw Error('Use Chrome, Brave ou Edge atualizado para gerar lotes.');return navigator.locks.request('frame-studio-batch-'+b.id,{ifAvailable:true},async lock=>{if(!lock)throw Error('Este lote está sendo processado em outra aba deste navegador.');const leaseToken=crypto.randomUUID(),claim=await studioClient.rpc('frame_claim_production',{p_id:b.id,p_token:leaseToken});if(claim.error||!claim.data)throw Error('Este lote está em geração em outra sessão. Aguarde a pausa ou conclusão.');b.leaseToken=leaseToken;const leaseTimer=setInterval(async()=>{const r=await studioClient.rpc('frame_claim_production',{p_id:b.id,p_token:leaseToken});if(r.error||!r.data)pauseRequested=true;},30000);productionBusy=true;activeBatch=b;pauseRequested=false;updateTest();genProgress.begin(b.jobs.length,b.jobs.filter(j=>terminalStatuses.includes(j.status)).length,45+6*((Number(b.duration)||Number(b.sources?.[0]?.out)||5)+(Number(b.sources?.[0]?.duration)||3)));try{b.status='running';b.productionStatus='Em geração';await saveProduction(b);for(const [i,j] of b.jobs.entries()){if(pauseRequested||!testConnected)break;if(terminalStatuses.includes(j.status))continue;if(['uncertain','submitting'].includes(j.status)&&!j.requestId)throw Error('Um pedido ficou sem confirmação de recebimento. Confira Requests na Higgsfield antes de reenviar.');const source=b.sources[j.sourceIndex];$('#production-status').textContent='Saída '+(i+1)+' de '+b.jobs.length;genProgress.stage(i,'prepare');if(b.mode==='frame'&&b.frameMethod==='auto'){genProgress.stage(i,'frame');j.frameJob=await editSource(b,source,()=>saveProduction(b));}if(!j.requestId){genProgress.stage(i,'submit');j.status='submitting';await saveProduction(b);try{Object.assign(j,await testAPI('submit',{productionId:b.id,leaseToken:b.leaseToken,mode:b.mode,attemptId:j.attemptId,modelId:b.modelId,mediaId:source.mediaId,frameMediaId:source.frameMediaId,frameJob:j.frameJob,duration:source.out||b.duration,resolution:b.resolution,ratio:b.ratio,cast:b.cast,target:b.target,directPrompt:b.directPrompt,framePrompt:b.framePrompt,multiPrompt:b.multiPrompt,basePrompt:b.basePrompt,outfit:b.outfit,generateAudio:b.generateAudio}));await saveProduction(b);}catch(e){j.status=e.status&&e.status<500?'failed':'uncertain';j.error=e.message;await saveProduction(b);throw e;}}genProgress.stage(i,'queued');Object.assign(j,await pollRequest(j,r=>{$('#production-status').textContent='Saída '+(i+1)+' / '+b.jobs.length+' · '+(statusNames[r.status]||r.status);if(!terminalStatuses.includes(r.status))genProgress.stage(i,r.status);}));if(j.status==='completed'){genProgress.stage(i,'archive');await archiveJob(j);}await saveProduction(b);genProgress.jobDone(j.status==='completed');if(j.status!=='completed'){notifyError(j.error||'A Higgsfield não concluiu esta geração.');const er=Error('Uma geração falhou. Lote pausado para revisão.');er.alerted=true;throw er;}}b.status=b.jobs.every(j=>terminalStatuses.includes(j.status))?'completed':'paused';b.productionStatus=b.status==='completed'?'Processamento encerrado':'Pausado';await saveProduction(b);$('#test-state').textContent=b.productionStatus;genProgress.end(b.status==='completed',b.productionStatus);}catch(e){b.status='paused';b.productionStatus='Pausado: '+e.message;genProgress.end(false,b.productionStatus);await saveProduction(b).catch(()=>{});if(!e.alerted)notifyError(e.message);}finally{clearInterval(leaseTimer);await studioClient.rpc('frame_release_production',{p_id:b.id,p_token:leaseToken});delete b.leaseToken;productionBusy=false;activeBatch=null;updateTest();renderBatches();}});}
-let pricedBatch=null,pricedSignature='';
-function estimateInput(b,source){return {mode:b.mode,modelId:b.modelId,mediaId:source.mediaId,frameMediaId:source.frameMediaId||source.originalFrameId,frameJob:source.frameJob?.status==='completed'?source.frameJob:undefined,duration:source.out||b.duration,resolution:b.resolution,ratio:b.ratio,cast:b.cast,target:b.target,directPrompt:b.directPrompt,framePrompt:b.framePrompt,multiPrompt:b.multiPrompt,basePrompt:b.basePrompt,outfit:b.outfit,generateAudio:b.generateAudio};}
-async function quoteBatch(b,pendingOnly=false){let video=0,image=0;for(const [index,source] of b.sources.entries()){const count=b.jobs.filter(j=>j.sourceIndex===index&&(!pendingOnly||!terminalStatuses.includes(j.status))).length;if(!count)continue;const quote=await testAPI('estimate',estimateInput(b,source));video+=quote.usd*count;if(b.mode==='frame'&&b.frameMethod==='auto'&&!source.frameJob?.requestId){const q=await testAPI('estimate-frame',{modelId:b.modelId,frameMediaId:source.originalFrameId,editPrompt:b.editPrompt,target:b.target,outfit:b.outfit,ratio:source.frameRatio});image+=q.usd;}}return {estimatedVideoCost:video,estimatedImageCost:image,estimatedCost:video+image,priceSource:'higgsfield-account',pricedAt:new Date().toISOString()};}
-async function priceCurrentPlan(plan){const signature=JSON.stringify(plan);if(!pricedBatch||pricedSignature!==signature){try{pricedBatch=await prepareProduction(plan);}finally{genProgress.hide();}pricedSignature=signature;}$('#test-state').textContent='Consultando o preço da sua conta na Higgsfield…';try{Object.assign(pricedBatch,await quoteBatch(pricedBatch));pricedBatch.estimateError='';}catch(e){Object.assign(pricedBatch,{estimatedCost:plan.estimatedCost,estimatedVideoCost:plan.estimatedVideoCost,estimatedImageCost:plan.estimatedImageCost,priceSource:'public-table',estimateError:e.message});}pricedBatch.productionStatus='Preço consultado · aguardando confirmação';await saveProduction(pricedBatch);$('#test-cost').textContent=(pricedBatch.priceSource==='higgsfield-account'?'Estimativa da sua conta Higgsfield: US$ ':'Preço da conta indisponível. Estimativa pela tabela pública SEM DESCONTO: US$ ')+pricedBatch.estimatedCost.toFixed(3).replace('.',',')+' · '+plan.outputs+' saída(s). Vídeos: US$ '+pricedBatch.estimatedVideoCost.toFixed(3).replace('.',',')+'; quadros: US$ '+pricedBatch.estimatedImageCost.toFixed(3).replace('.',',')+'.';$('#test-state').textContent=pricedBatch.estimateError||'Preço consultado. Nenhuma geração foi enviada.';return pricedBatch;}
-$('#estimate-account').onclick=async()=>{if(productionBusy)return;productionBusy=true;try{const plan=await capturePlan();if(!testConnected)throw Error('Conecte sua chave para consultar o preço da conta.');updateTest();await priceCurrentPlan(plan);}catch(e){toast(e.message);$('#test-state').textContent=e.message;}finally{productionBusy=false;$('#batch-form').inert=false;$('#estimate-account').disabled=$('#generate-test').disabled=!testConnected;$('#generate-test').textContent='Gerar '+($('#outputs').value||1)+' vídeo(s)';}};
-$('#generate-test').onclick=async()=>{if(productionBusy)return;let batch;try{if(!testConnected)throw Error('Conecte a Higgsfield.');const plan=await capturePlan();productionBusy=true;updateTest();batch=await priceCurrentPlan(plan);productionBusy=false;$('#batch-form').inert=false;$('#generate-test').disabled=false;if(!await askConfirm('Gerar '+batch.outputs+' vídeo(s) na Higgsfield?\n'+(batch.priceSource==='higgsfield-account'?'Estimativa da sua conta: US$ ':'A consulta da conta falhou. Usar estimativa da tabela pública, SEM DESCONTO: US$ ')+batch.estimatedCost.toFixed(3).replace('.',',')+' (vídeos US$ '+batch.estimatedVideoCost.toFixed(3).replace('.',',')+' + quadros US$ '+batch.estimatedImageCost.toFixed(3).replace('.',',')+').\nAs fotos e vídeos serão compartilhados com o provedor. Mantenha esta aba aberta.'))return;pricedBatch=null;pricedSignature='';view('batches');await runProduction(batch);}catch(e){productionBusy=false;$('#batch-form').inert=false;toast(e.message);$('#test-state').textContent=e.message;}finally{if(!productionBusy){if(batch&&batch.jobs&&batch.jobs.length&&batch.jobs.every(j=>j.status==='completed')){files=[];try{selectedFiles.clear();}catch(e){}renderFiles();}updateTest();}}};
-window.renderProductionBatch=(b,card)=>{if(!b.jobs?.length){if(b.status==='uploading'){card.append(el('p','O envio dos arquivos não terminou. Reabra o estúdio e selecione os arquivos para preparar um novo lote.'));return;}if(b.status==='draft'){const use=el('button','Usar configuração no estúdio','secondary');use.onclick=()=>{setMode(b.mode);$('#model').value=b.modelId||'';$('#outputs').value=b.outputs;$('#duration').value=b.duration===0?0:Math.min(15,Number(b.duration)||15);$('#resolution').value=b.resolution;$('#ratio').value=b.ratio;$('#prompt-direct').value=b.directPrompt||b.prompts?.direct||'';$('#prompt-frame').value=b.framePrompt||b.prompts?.frame||defaultFramePrompt;$('#prompt-multi').value=b.multiPrompt||defaultMultiPrompt;$('#prompt-base').value=b.basePrompt||b.prompts?.base||'';$('#frame-edit-prompt').value=b.editPrompt||defaultImagePrompt;$('#target-person').value=b.target||'the main person';if(b.cast?.length){castRows=b.cast.map(x=>({...x}));renderCast();}view('studio');updateTest();toast('Configuração carregada. Confira e selecione os arquivos de origem.');};card.append(use);}return;}const completed=b.jobs.filter(j=>j.status==='completed').length,progress=el('progress');progress.max=b.jobs.length;progress.value=completed;if(activeBatch?.id===b.id){const live=setInterval(()=>{if(!progress.isConnected){clearInterval(live);return;}const c=window.genProgress.current();if(c!==null)progress.value=Math.max(completed,c/100*b.jobs.length);},500);}const actions=el('div',null,'row-actions');if(activeBatch?.id===b.id){const pause=el('button',pauseRequested?'Pausa solicitada':'Pausar próximos envios','secondary');pause.disabled=pauseRequested;pause.onclick=()=>{pauseRequested=true;renderBatches();};actions.append(pause);}else if(!b.deleted&&b.jobs.some(j=>!terminalStatuses.includes(j.status))){const resume=el('button','Retomar lote','primary');resume.disabled=productionBusy;resume.onclick=async()=>{try{if(!testConnected)throw Error('Conecte a Higgsfield para retomar.');let quote;try{quote=await quoteBatch(b,true);}catch{const rate={'480p':.05,'720p':.10,'1080p':.20}[b.resolution];let estimatedCost=0;for(const [index,source] of b.sources.entries()){const count=b.jobs.filter(j=>j.sourceIndex===index&&!terminalStatuses.includes(j.status)).length;estimatedCost+=count*(Math.ceil(source.duration)+(source.out||b.duration))*rate;if(count&&b.mode==='frame'&&b.frameMethod==='auto'&&!source.frameJob?.requestId)estimatedCost+=.04;}quote={estimatedCost,priceSource:'public-table'};}if(!await askConfirm('Retomar pedidos pendentes deste lote? Concluídos não serão reenviados. '+(quote.priceSource==='public-table'?'Consulta da conta indisponível. Estimativa da tabela pública SEM DESCONTO: US$ ':'Estimativa da sua conta para os pendentes: US$ ')+quote.estimatedCost.toFixed(3).replace('.',',')+'.'))return;const r=await studioClient.from('frame_library').select('*').eq('id',b.id).single();if(r.error||r.data.deleted)throw Error('Lote indisponível.');await runProduction({...r.data.data,id:b.id,kind:'batch',created:r.data.created_at,deleted:false});}catch(e){toast(e.message);}};actions.append(resume);}card.append(progress,el('p',completed+' de '+b.jobs.length+' concluídos'),actions);b.jobs.forEach((j,i)=>{if(!j.videoUrl){if(j.error)card.append(el('p','Saída '+(i+1)+': '+j.error));return;}const d=el('details'),v=el('video'),a=el('button','Baixar MP4','primary');v.controls=true;v.preload='none';v.src=j.videoUrl;a.type='button';a.onclick=async()=>{a.disabled=true;try{if(j.videoPath){const link=el('a');link.href=await storageSignedUrl(j.videoPath,300,'frame-studio-'+(i+1)+'.mp4');link.download='frame-studio-'+(i+1)+'.mp4';document.body.append(link);link.click();link.remove();}else{await archiveJob(j);await saveProduction(b);if(!j.downloadUrl)throw Error(j.archiveError||'Não foi possível preparar o download.');const link=el('a');link.href=j.downloadUrl;document.body.append(link);link.click();link.remove();}}catch(e){toast(e.message);}finally{a.disabled=false;}};if(j.videoPath)storageSignedUrl(j.videoPath,3600).then(u=>{v.src=u;}).catch(()=>{});const original=el('a','Abrir original ↗');original.href=j.videoUrl||'#';original.target='_blank';original.rel='noopener';if(j.videoPath)original.onclick=async ev=>{ev.preventDefault();const w=window.open('about:blank','_blank');try{const u=await storageSignedUrl(j.videoPath,3600);if(w)w.location.href=u;else window.location.href=u;}catch(e){if(w)w.close();toast(e.message||'Não foi possível abrir o vídeo.');}};d.append(original);d.append(el('summary','Vídeo '+(i+1)+' · '+b.sources[j.sourceIndex].name),v,a);card.append(d);});};
-$('#batch-form').onsubmit=async e=>{e.preventDefault();try{const plan=await capturePlan();await studioApi('POST',{kind:'batch',data:{...plan,status:'draft',productionStatus:'Rascunho · configurações salvas',prompt:plan[plan.mode+'Prompt']}});await load();view('batches');toast('Rascunho salvo. Use Gerar vídeos no estúdio para enviar.');}catch(e){toast(e.message);}};
-$('#hf-connect-form').onsubmit=async e=>{e.preventDefault();const raw=$('#hf-key-id').value.trim();if(!/^[-a-zA-Z0-9_]+:[^\s:]+$/.test(raw))return $('#hf-feedback').textContent='Cole a chave completa ID:Secret.';$('#hf-connect').disabled=true;try{await testAPI('connect',{credentials:raw,save:true});sessionHFKey='';testConnected=true;$('#hf-feedback').textContent='Chave válida e salva com proteção na sua conta. Nenhuma geração enviada.';$('#hf-disconnect').hidden=false;await checkConnection();}catch(e){$('#hf-feedback').textContent=e.message;}finally{$('#hf-key-id').value='';$('#hf-connect').disabled=false;}};
-$('#hf-disconnect').onclick=async()=>{if(!await askConfirm('Remover a chave Higgsfield salva da sua conta? Próximos envios serão pausados.'))return;try{await testAPI('disconnect',{});pauseRequested=true;sessionHFKey='';testConnected=false;$('#hf-disconnect').hidden=true;$('#hf-feedback').textContent='Chave removida da sua conta.';await checkConnection();}catch(e){toast(e.message);}};
-window.addEventListener('studio-models-update',()=>{renderCast();updateTest();});window.addEventListener('studio-test-update',updateTest);window.addEventListener('studio-authenticated',checkConnection);window.addEventListener('studio-signed-out',()=>{pauseRequested=true;sessionHFKey='';testConnected=false;reviewedFrame=null;castRows=[{modelId:'',target:''}];$('#frame-preview').replaceChildren();$('#production-status').textContent='';$('#test-state').textContent='Entre na sua conta para continuar.';});
-document.querySelectorAll('.flow').forEach(b=>b.addEventListener('click',updateTest));['trim-on','trim-start','trim-length','model','resolution','duration','ratio','outputs','edited-frame','target-person','frame-edit-prompt','prompt-direct','prompt-frame','prompt-base','prompt-multi'].forEach(id=>$('#'+id).addEventListener('change',updateTest));new MutationObserver(updateTest).observe($('#file-list'),{childList:true});
-$('#prompt-frame').value=defaultFramePrompt;$('#prompt-multi').value=defaultMultiPrompt;$('#frame-edit-prompt').value=defaultImagePrompt;renderCast();studioClient.auth.getSession().then(({data})=>{if(data.session)checkConnection();});
-$('#trim-on').addEventListener('change',()=>{$('#trim-start').disabled=$('#trim-length').disabled=!$('#trim-on').checked;});
-['trim-start','trim-length','outputs'].forEach(id=>$('#'+id).addEventListener('input',updateTest));
+window.fsAlert = fsAlert;
+async function testAPI(action, body) {
+  const {
+    data: { session },
+  } = await studioClient.auth.getSession();
+  if (!session) throw Error('Entre na sua conta.');
+  const r = await fetch('/api/higgsfield?action=' + action, {
+    method: body ? 'POST' : 'GET',
+    headers: {
+      Authorization: 'Bearer ' + session.access_token,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body
+      ? JSON.stringify({ ...body, ...(sessionHFKey ? { credentials: body.credentials || sessionHFKey } : {}) })
+      : undefined,
+  });
+  const d = await r.json();
+  if (!r.ok) throw Object.assign(Error(d.error || 'Falha na comunicação.'), { status: r.status });
+  return d;
+}
+async function patchRecord(id, data) {
+  const r = await studioClient.from('frame_library').update({ data }).eq('id', id).select('id');
+  if (r.error || !r.data?.length) throw Error('Falha ao salvar o acompanhamento.');
+}
+async function checkConnection() {
+  try {
+    testConnected = sessionHFKey ? true : (await testAPI('config')).configured;
+    $('#hf-disconnect').hidden = !testConnected;
+    $('#connection-state').textContent = testConnected
+      ? 'Higgsfield conectada à sua conta. Três fluxos disponíveis.'
+      : 'Conecte sua chave completa.';
+    document.querySelector('.status').textContent = testConnected ? 'Higgsfield conectada' : 'Integração pendente';
+    if (testConnected && $('#test-state').textContent.startsWith('Conecte'))
+      $('#test-state').textContent = 'Conexão pronta. Consulte o preço e confirme a geração.';
+  } catch (e) {
+    testConnected = false;
+    $('#connection-state').textContent = e.message;
+  }
+  updateTest();
+}
+async function videoMetadata(file) {
+  if (file.studioMetadata) return file.studioMetadata;
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video'),
+      url = URL.createObjectURL(file),
+      timer = setTimeout(() => done(Error('Não foi possível ler o vídeo.')), 15000);
+    function done(e) {
+      clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      v.removeAttribute('src');
+      v.load();
+      e ? reject(e) : resolve(file.studioMetadata);
+    }
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      file.studioMetadata = { duration: v.duration, width: v.videoWidth, height: v.videoHeight };
+      done(Number.isFinite(v.duration) ? null : Error('Vídeo inválido.'));
+    };
+    v.onerror = () => done(Error('Use MP4 válido.'));
+    v.src = url;
+  });
+}
+async function extractFrame(file, at = 0.001) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video'),
+      url = URL.createObjectURL(file);
+    let ended = false;
+    const timer = setTimeout(() => finish(Error('Falha ao extrair quadro.')), 20000);
+    function finish(e, r) {
+      if (ended) return;
+      ended = true;
+      clearTimeout(timer);
+      URL.revokeObjectURL(url);
+      v.removeAttribute('src');
+      v.load();
+      e ? reject(e) : resolve(r);
+    }
+    v.preload = 'auto';
+    v.muted = true;
+    v.onloadeddata = () => {
+      v.currentTime = Math.min(at, Math.max(0, (v.duration || at) - 0.05));
+    };
+    v.onseeked = () => {
+      try {
+        const c = document.createElement('canvas'),
+          scale = Math.min(1, 1920 / Math.max(v.videoWidth, v.videoHeight));
+        c.width = Math.round(v.videoWidth * scale);
+        c.height = Math.round(v.videoHeight * scale);
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob(
+          (blob) =>
+            blob ? finish(null, { blob, width: c.width, height: c.height }) : finish(Error('Quadro inválido.')),
+          'image/png',
+        );
+      } catch (e) {
+        finish(e);
+      }
+    };
+    v.onerror = () => finish(Error('Falha ao abrir vídeo.'));
+    v.src = url;
+  });
+}
+async function uploadMedia(blob, name, extra = {}) {
+  const {
+    data: { user },
+  } = await studioClient.auth.getUser();
+  if (!user) throw Error('Entre novamente.');
+  const path = user.id + '/' + crypto.randomUUID(),
+    r = await studioClient.storage.from('frame-private').upload(path, blob, { contentType: blob.type, upsert: false });
+  if (r.error) throw r.error;
+  return studioApi('POST', { kind: 'media', data: { path, name, size: blob.size, type: blob.type, ...extra } });
+}
+async function pollRequest(job, progress) {
+  for (;;) {
+    if (!testConnected) throw Error('Reconecte a chave para acompanhar.');
+    const result = await testAPI('status', job);
+    progress?.(result);
+    if (terminalStatuses.includes(result.status)) return result;
+    await new Promise((r) => setTimeout(r, 7000));
+  }
+}
+function frameSignature() {
+  return JSON.stringify([
+    files[0]?.id,
+    $('#model').value,
+    $('#frame-edit-prompt').value,
+    $('#target-person').value,
+    $('#ratio').value,
+    trimStart(),
+    window.fsOutfit ? window.fsOutfit.signature() : '',
+  ]);
+}
+function showFrame(url, caption) {
+  const img = el('img');
+  img.src = url;
+  img.alt = caption;
+  $('#frame-preview').replaceChildren(img, el('p', caption));
+}
+function frameRatio(meta) {
+  if ($('#ratio').value !== 'adaptive') return $('#ratio').value;
+  const r = meta.width / meta.height;
+  return ['1:1', '3:4', '4:3', '9:16', '16:9'].sort(
+    (a, b) => Math.abs(evalRatio(a) - r) - Math.abs(evalRatio(b) - r),
+  )[0];
+}
+function evalRatio(s) {
+  const [a, b] = s.split(':').map(Number);
+  return a / b;
+}
+async function editSource(context, source, save) {
+  if (source.frameJob?.status === 'completed') return source.frameJob;
+  if (!source.frameJob) {
+    source.frameJob = { attemptId: crypto.randomUUID(), status: 'prepared' };
+    await save();
+  }
+  const job = source.frameJob;
+  if (['uncertain', 'submitting'].includes(job.status) && !job.requestId)
+    throw Error('Confira em Requests se a edição foi recebida antes de reenviar.');
+  if (terminalStatuses.includes(job.status))
+    throw Error('A edição do quadro falhou. Prepare um novo lote após revisar.');
+  if (!job.requestId) {
+    job.status = 'submitting';
+    await save();
+    try {
+      Object.assign(
+        job,
+        await testAPI('edit-frame', {
+          productionId: context.id,
+          leaseToken: context.leaseToken,
+          attemptId: job.attemptId,
+          modelId: context.modelId,
+          frameMediaId: source.originalFrameId,
+          editPrompt: context.editPrompt,
+          target: context.target,
+          outfit: context.outfit,
+          ratio: source.frameRatio,
+        }),
+      );
+      await save();
+    } catch (e) {
+      job.status = e.status && e.status < 500 ? 'failed' : 'uncertain';
+      job.error = e.message;
+      await save();
+      throw e;
+    }
+  }
+  Object.assign(job, await pollRequest(job, (r) => ($('#frame-state').textContent = 'Edição do quadro: ' + r.status)));
+  await save();
+  if (!job.imageUrl) throw Error('A edição não retornou uma imagem.');
+  return job;
+}
+$('#frame-method').onchange = () => {
+  $('#auto-frame-options').hidden = $('#frame-method').value !== 'auto';
+  $('#manual-frame-options').hidden = $('#frame-method').value !== 'manual';
+  updateTest();
+};
+$('#edited-frame').addEventListener('change', () => {
+  const f = $('#edited-frame').files[0];
+  if (f && f.type.startsWith('image/')) showFrame(URL.createObjectURL(f), 'Quadro editado enviado por você');
+});
+$('#preview-frame').onclick = async () => {
+  try {
+    if (files.length !== 1) throw Error('Selecione um vídeo para revisar o quadro.');
+    const f = await extractFrame(files[0].file, trimStart()),
+      url = URL.createObjectURL(f.blob);
+    showFrame(url, 'Quadro original · ainda sem edição');
+  } catch (e) {
+    toast(e.message);
+  }
+};
+$('#edit-frame-now').onclick = async () => {
+  if (productionBusy) return;
+  try {
+    if (!testConnected || files.length !== 1 || !$('#model').value)
+      throw Error('Conecte a Higgsfield e escolha uma modelo e um vídeo.');
+    if (
+      !(await askConfirm(
+        'Editar 1 quadro com Qwen Image 3 na Higgsfield por aproximadamente US$ 0,04? A imagem do vídeo e a foto da modelo serão compartilhadas. Nenhum vídeo será gerado nesta etapa.',
+      ))
+    )
+      return;
+    productionBusy = true;
+    updateTest();
+    $('#edit-frame-now').disabled = true;
+    const signature = frameSignature(),
+      frame = await extractFrame(files[0].file, trimStart()),
+      original = await uploadMedia(frame.blob, 'primeiro-quadro.png'),
+      context = {
+        modelId: $('#model').value,
+        editPrompt: $('#frame-edit-prompt').value.trim(),
+        target: $('#target-person').value.trim(),
+        outfit: window.fsOutfit && window.fsOutfit.on() ? await window.fsOutfit.upload() : undefined,
+      },
+      source = { originalFrameId: original.id, frameRatio: frameRatio(frame) },
+      record = await studioApi('POST', {
+        kind: 'generation',
+        data: { jobType: 'frame-review', ...context, ...source },
+      });
+    const job = await editSource(context, source, () =>
+      patchRecord(record.id, { jobType: 'frame-review', ...context, ...source }),
+    );
+    reviewedFrame = { signature, job };
+    showFrame(job.imageUrl, 'Quadro editado · referência visual para o vídeo');
+    $('#frame-state').textContent = 'Revise a identidade antes de gerar.';
+  } catch (e) {
+    $('#frame-state').textContent = e.message;
+  } finally {
+    productionBusy = false;
+    $('#edit-frame-now').disabled = false;
+    updateTest();
+  }
+};
+let castRows = [{ modelId: '', target: '' }];
+function renderCast() {
+  const root = $('#cast-list');
+  root.replaceChildren();
+  castRows.forEach((row, i) => {
+    const box = el('div', null, 'cast-row'),
+      select = el('select'),
+      input = el('input');
+    select.setAttribute('aria-label', 'Modelo da pessoa ' + (i + 1));
+    select.add(new Option('Selecione uma modelo', ''));
+    models.forEach((m) => select.add(new Option(m.name, m.id)));
+    select.value = row.modelId;
+    select.onchange = () => {
+      row.modelId = select.value;
+      updateTest();
+    };
+    input.setAttribute('aria-label', 'Identificar pessoa ' + (i + 1));
+    input.maxLength = 200;
+    input.value = row.target;
+    input.placeholder = i ? 'a mulher à direita, de camisa azul' : 'a mulher à esquerda, de blusa branca';
+    input.onchange = () => {
+      row.target = input.value;
+      updateTest();
+    };
+    const remove = el('button', 'Remover', 'secondary');
+    remove.type = 'button';
+    remove.disabled = castRows.length <= 1;
+    remove.onclick = () => {
+      castRows.splice(i, 1);
+      renderCast();
+    };
+    box.append(
+      el('strong', 'Pessoa ' + (i + 1)),
+      select,
+      el('label', 'Quem será trocado no vídeo? Descreva em português a posição, o cabelo e a roupa.'),
+      input,
+      remove,
+    );
+    root.append(box);
+  });
+  $('#add-person').disabled = castRows.length >= 4;
+}
+$('#add-person').onclick = () => {
+  if (castRows.length < 4) {
+    castRows.push({ modelId: '', target: '' });
+    renderCast();
+  }
+};
+async function capturePlan() {
+  if (!loaded) throw Error('Aguarde a biblioteca.');
+  if (window.fsOutfit) window.fsOutfit.check();
+  if (!files.length || files.length > 300) throw Error('Adicione de 1 a 300 vídeos.');
+  const outputs = Number($('#outputs').value),
+    duration = Number($('#duration').value);
+  if (!Number.isInteger(outputs) || outputs < files.length || outputs > 300)
+    throw Error('Escolha entre ' + files.length + ' e 300 saídas.');
+  if (!Number.isInteger(duration) || duration < 0 || duration === 1 || duration > 15)
+    throw Error('Duração: automática ou de 2 a 15 segundos.');
+  const p = {
+    mode,
+    outputs,
+    duration,
+    resolution: $('#resolution').value,
+    ratio: $('#ratio').value,
+    target: $('#target-person').value.trim(),
+    directPrompt: $('#prompt-direct').value.trim(),
+    framePrompt: $('#prompt-frame').value.trim() || defaultFramePrompt,
+    multiPrompt: $('#prompt-multi').value.trim() || defaultMultiPrompt,
+    basePrompt: $('#prompt-base').value.trim(),
+    editPrompt: $('#frame-edit-prompt').value.trim() || defaultImagePrompt,
+    frameMethod: $('#frame-method').value,
+    cast: castRows.map((x) => ({ ...x, target: x.target.trim() })),
+    engine: 'Wan 3.0',
+    generateAudio: true,
+    trim: trimSettings(),
+  };
+  if (mode === 'multi') {
+    if (
+      p.cast.length < 1 ||
+      p.cast.length > 4 ||
+      p.cast.some((x) => !x.target || !models.some((m) => m.id === x.modelId)) ||
+      new Set(p.cast.map((x) => x.target.toLowerCase())).size !== p.cast.length
+    )
+      throw Error('Associe uma modelo e uma descrição distinta a cada pessoa.');
+    if (/\{\{identity\}\}|\{\{target\}\}/.test(p.basePrompt))
+      throw Error('Múltiplas pessoas: o prompt base deve conter apenas regras comuns, sem {{identity}} ou {{target}}.');
+    p.modelName = p.cast.map((x) => models.find((m) => m.id === x.modelId).name).join(' + ');
+  } else {
+    const m = models.find((m) => m.id === $('#model').value);
+    if (!m) throw Error('Escolha uma modelo.');
+    p.modelId = m.id;
+    p.modelName = m.name;
+    if (mode === 'direct' && !p.directPrompt) throw Error('Preencha o prompt de troca direta.');
+  }
+  p.files = [];
+  const trim = p.trim;
+  if (
+    trim.enabled &&
+    (!Number.isFinite(trim.start) ||
+      trim.start < 0 ||
+      !Number.isFinite(trim.length) ||
+      trim.length < 1 ||
+      trim.length > 15)
+  )
+    throw Error('Corte: o início deve ser 0 ou mais e o trecho de 1 a 15 segundos.');
+  for (const x of files) {
+    const meta = await videoMetadata(x.file);
+    if (trim.enabled) {
+      if (!x.file.type.startsWith('video/') || x.file.size > 500 * 1048576)
+        throw Error(x.file.name + ': use um vídeo de até 500 MB para cortar.');
+      if (!(meta.duration > trim.start + 0.5))
+        throw Error(
+          x.file.name +
+            ': o início do corte (' +
+            trim.start +
+            ' s) passa do fim do vídeo, que tem ' +
+            meta.duration.toFixed(1) +
+            ' s.',
+        );
+      const used = Math.min(trim.length, meta.duration - trim.start);
+      p.files.push({
+        fileId: x.id,
+        name: x.file.name,
+        size: x.file.size,
+        type: 'video/mp4',
+        ...meta,
+        sourceDuration: meta.duration,
+        duration: Math.max(1, Math.round(used * 10) / 10),
+      });
+    } else {
+      if (x.file.type !== 'video/mp4' || x.file.size > 100 * 1048576 || meta.duration < 1 || meta.duration > 15)
+        throw Error(x.file.name + ': use MP4 de 1 a 15 segundos, até 100 MB, ou ative o corte.');
+      p.files.push({ fileId: x.id, name: x.file.name, size: x.file.size, type: x.file.type, ...meta });
+    }
+  }
+  for (const f of p.files) f.out = duration || Math.max(2, Math.min(15, Math.floor(f.duration)));
+  if ([p.directPrompt, p.framePrompt, p.multiPrompt, p.basePrompt, p.editPrompt].some((x) => x.length > 20000))
+    throw Error('Use até 20.000 caracteres por prompt.');
+  if (
+    p.mode !== 'multi' &&
+    p.basePrompt.length +
+      (p[p.mode + 'Prompt'] || '').length +
+      String(models.find((m) => m.id === p.modelId)?.identity || '').length >
+      19000
+  )
+    throw Error('Reduza os prompts e características: limite combinado próximo de 20.000 caracteres.');
+  if (mode === 'frame' && p.frameMethod === 'manual') {
+    const f = $('#edited-frame').files[0];
+    if (!f || !['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size > 4 * 1048576)
+      throw Error('Envie o quadro editado em PNG, JPEG ou WebP, até 4 MB.');
+  }
+  const rate = RATES[p.resolution];
+  p.rate = rate;
+  p.billedSource = Array.from({ length: outputs }, (_, i) => Math.ceil(p.files[i % p.files.length].duration)).reduce(
+    (a, b) => a + b,
+    0,
+  );
+  p.billedOutput = Array.from({ length: outputs }, (_, i) => p.files[i % p.files.length].out).reduce(
+    (a, b) => a + b,
+    0,
+  );
+  p.estimatedVideoCost = Array.from(
+    { length: outputs },
+    (_, i) => (Math.ceil(p.files[i % p.files.length].duration) + p.files[i % p.files.length].out) * rate,
+  ).reduce((a, b) => a + b, 0);
+  p.estimatedImageCost =
+    mode === 'frame' && p.frameMethod === 'auto'
+      ? (p.files.length - (reviewedFrame?.signature === frameSignature() && files.length === 1 ? 1 : 0)) * 0.04
+      : 0;
+  p.estimatedCost = p.estimatedVideoCost + p.estimatedImageCost;
+  return p;
+}
+let estimateVersion = 0;
+async function updateTest() {
+  $('#batch-form').inert = productionBusy;
+  const version = ++estimateVersion;
+  $('#generate-test').disabled = $('#estimate-account').disabled = !testConnected || productionBusy;
+  $('#generate-test').textContent = productionBusy
+    ? 'Processando…'
+    : 'Gerar ' + ($('#outputs').value || 1) + ' vídeo(s)';
+  try {
+    const p = await capturePlan();
+    if (version !== estimateVersion) return;
+    const box = $('#test-cost');
+    box.className = 'cost-box';
+    const lines = Array.from({ length: Math.min(p.outputs, 6) }, (_, i) => {
+      const pf = p.files[i % p.files.length],
+        src = Math.ceil(pf.duration);
+      return (
+        'Geração ' +
+        (i + 1) +
+        ': (' +
+        src +
+        ' s de origem + ' +
+        pf.out +
+        ' s de saída) × ' +
+        rateText(p.rate) +
+        '/s (' +
+        p.resolution +
+        ') = ' +
+        money((src + pf.out) * p.rate)
+      );
+    });
+    if (p.outputs > 6) lines.push('… e mais ' + (p.outputs - 6) + ' geração(ões).');
+    box.style.whiteSpace = 'pre-line';
+    box.textContent =
+      'Estimativa sem desconto: ' +
+      money(p.estimatedCost) +
+      ' no total · ' +
+      p.outputs +
+      ' saída(s)' +
+      (p.estimatedImageCost ? ' · inclui ' + money(p.estimatedImageCost) + ' de edição de quadros' : '') +
+      '\n' +
+      lines.join('\n') +
+      '\nValor pela tabela pública, sem desconto; a cobrança final é da Higgsfield.';
+  } catch (e) {
+    if (version === estimateVersion) {
+      const box = $('#test-cost');
+      if (loaded && !files.length) {
+        box.className = 'cost-box preview';
+        box.textContent = previewCostText();
+      } else {
+        box.className = '';
+        box.textContent = e.message;
+      }
+      $('#generate-test').disabled = $('#estimate-account').disabled = true;
+    }
+  }
+}
+async function archiveJob(job) {
+  try {
+    Object.assign(job, await testAPI('archive', job));
+    job.archiveError = '';
+  } catch (e) {
+    job.archiveError = e.message;
+  }
+}
+async function saveProduction(b) {
+  const { id, created, kind, deleted, ...data } = b;
+  const saved = await studioClient.rpc('frame_save_production', {
+    p_id: id,
+    p_payload: data,
+    p_token: b.leaseToken || null,
+  });
+  if (saved.error || !saved.data) throw Error('Lote ocupado em outra sessão ou acesso expirado.');
+  const i = batches.findIndex((x) => x.id === id);
+  if (i < 0) batches.unshift(b);
+  else batches[i] = b;
+  renderBatches();
+}
+async function prepareProduction(plan) {
+  const sourceFiles = [...files],
+    manual = $('#edited-frame').files[0],
+    review = reviewedFrame?.signature === frameSignature() && files.length === 1 ? reviewedFrame : null;
+  const b = await studioApi('POST', {
+    kind: 'batch',
+    data: { ...plan, status: 'uploading', productionStatus: 'Preparando arquivos', sources: [], jobs: [] },
+  });
+  if (window.fsOutfit && window.fsOutfit.on()) b.outfit = await window.fsOutfit.upload();
+  await saveProduction(b);
+  let manualId;
+  if (plan.mode === 'frame' && plan.frameMethod === 'manual') manualId = (await uploadMedia(manual, manual.name)).id;
+  for (const [fi, f] of plan.files.entries()) {
+    const file = sourceFiles.find((x) => x.id === f.fileId).file;
+    let upload = file;
+    genProgress.prep(fi, plan.files.length, 'Preparando ' + f.name, 0);
+    if (plan.trim?.enabled) {
+      $('#test-state').textContent = 'Cortando ' + f.name + ' (' + f.duration + ' s)…';
+      upload = await window.trimVideo(file, plan.trim.start, plan.trim.length, (pr) => {
+        $('#test-state').textContent = 'Cortando ' + f.name + ' · ' + Math.round(pr * 100) + '%';
+        genProgress.prep(fi, plan.files.length, 'Cortando ' + f.name, pr * 0.7);
+      });
+    }
+    $('#test-state').textContent = 'Enviando ' + f.name + ' à biblioteca privada…';
+    genProgress.prep(fi, plan.files.length, 'Enviando ' + f.name, plan.trim?.enabled ? 0.7 : 0.1);
+    const source = { ...f, mediaId: (await uploadMedia(upload, f.name, { duration: f.duration })).id };
+    genProgress.prep(fi, plan.files.length, 'Enviado ' + f.name, 1);
+    if (plan.mode === 'frame') {
+      if (manualId) source.frameMediaId = manualId;
+      else if (review) source.frameJob = review.job;
+      else {
+        const frame = await extractFrame(file, plan.trim?.enabled ? plan.trim.start + 0.001 : 0.001);
+        source.originalFrameId = (await uploadMedia(frame.blob, 'quadro-' + f.name + '.png')).id;
+        source.frameRatio = frameRatio(frame);
+      }
+    }
+    b.sources.push(source);
+    await saveProduction(b);
+  }
+  b.jobs = Array.from({ length: plan.outputs }, (_, i) => ({
+    attemptId: crypto.randomUUID(),
+    sourceIndex: i % b.sources.length,
+    variation: Math.floor(i / b.sources.length) + 1,
+    status: 'prepared',
+  }));
+  b.status = 'ready';
+  b.productionStatus = 'Pronto para gerar';
+  await saveProduction(b);
+  return b;
+}
+async function runProduction(b) {
+  if (productionBusy) return;
+  if (Number(b.duration) > 15)
+    throw Error('Este lote antigo ultrapassa 15 segundos. Prepare um novo lote com duração de até 15 segundos.');
+  if (!navigator.locks) throw Error('Use Chrome, Brave ou Edge atualizado para gerar lotes.');
+  return navigator.locks.request('frame-studio-batch-' + b.id, { ifAvailable: true }, async (lock) => {
+    if (!lock) throw Error('Este lote está sendo processado em outra aba deste navegador.');
+    const leaseToken = crypto.randomUUID(),
+      claim = await studioClient.rpc('frame_claim_production', { p_id: b.id, p_token: leaseToken });
+    if (claim.error || !claim.data)
+      throw Error('Este lote está em geração em outra sessão. Aguarde a pausa ou conclusão.');
+    b.leaseToken = leaseToken;
+    const leaseTimer = setInterval(async () => {
+      const r = await studioClient.rpc('frame_claim_production', { p_id: b.id, p_token: leaseToken });
+      if (r.error || !r.data) pauseRequested = true;
+    }, 30000);
+    productionBusy = true;
+    activeBatch = b;
+    pauseRequested = false;
+    updateTest();
+    genProgress.begin(
+      b.jobs.length,
+      b.jobs.filter((j) => terminalStatuses.includes(j.status)).length,
+      45 + 6 * ((Number(b.duration) || Number(b.sources?.[0]?.out) || 5) + (Number(b.sources?.[0]?.duration) || 3)),
+    );
+    try {
+      b.status = 'running';
+      b.productionStatus = 'Em geração';
+      await saveProduction(b);
+      for (const [i, j] of b.jobs.entries()) {
+        if (pauseRequested || !testConnected) break;
+        if (terminalStatuses.includes(j.status)) continue;
+        if (['uncertain', 'submitting'].includes(j.status) && !j.requestId)
+          throw Error(
+            'Um pedido ficou sem confirmação de recebimento. Confira Requests na Higgsfield antes de reenviar.',
+          );
+        const source = b.sources[j.sourceIndex];
+        $('#production-status').textContent = 'Saída ' + (i + 1) + ' de ' + b.jobs.length;
+        genProgress.stage(i, 'prepare');
+        if (b.mode === 'frame' && b.frameMethod === 'auto') {
+          genProgress.stage(i, 'frame');
+          j.frameJob = await editSource(b, source, () => saveProduction(b));
+        }
+        if (!j.requestId) {
+          genProgress.stage(i, 'submit');
+          j.status = 'submitting';
+          await saveProduction(b);
+          try {
+            Object.assign(
+              j,
+              await testAPI('submit', {
+                productionId: b.id,
+                leaseToken: b.leaseToken,
+                mode: b.mode,
+                attemptId: j.attemptId,
+                modelId: b.modelId,
+                mediaId: source.mediaId,
+                frameMediaId: source.frameMediaId,
+                frameJob: j.frameJob,
+                duration: source.out || b.duration,
+                resolution: b.resolution,
+                ratio: b.ratio,
+                cast: b.cast,
+                target: b.target,
+                directPrompt: b.directPrompt,
+                framePrompt: b.framePrompt,
+                multiPrompt: b.multiPrompt,
+                basePrompt: b.basePrompt,
+                outfit: b.outfit,
+                generateAudio: b.generateAudio,
+              }),
+            );
+            await saveProduction(b);
+          } catch (e) {
+            j.status = e.status && e.status < 500 ? 'failed' : 'uncertain';
+            j.error = e.message;
+            await saveProduction(b);
+            throw e;
+          }
+        }
+        genProgress.stage(i, 'queued');
+        Object.assign(
+          j,
+          await pollRequest(j, (r) => {
+            $('#production-status').textContent =
+              'Saída ' + (i + 1) + ' / ' + b.jobs.length + ' · ' + (statusNames[r.status] || r.status);
+            if (!terminalStatuses.includes(r.status)) genProgress.stage(i, r.status);
+          }),
+        );
+        if (j.status === 'completed') {
+          genProgress.stage(i, 'archive');
+          await archiveJob(j);
+        }
+        await saveProduction(b);
+        genProgress.jobDone(j.status === 'completed');
+        if (j.status !== 'completed') {
+          notifyError(j.error || 'A Higgsfield não concluiu esta geração.');
+          const er = Error('Uma geração falhou. Lote pausado para revisão.');
+          er.alerted = true;
+          throw er;
+        }
+      }
+      b.status = b.jobs.every((j) => terminalStatuses.includes(j.status)) ? 'completed' : 'paused';
+      b.productionStatus = b.status === 'completed' ? 'Processamento encerrado' : 'Pausado';
+      await saveProduction(b);
+      $('#test-state').textContent = b.productionStatus;
+      genProgress.end(b.status === 'completed', b.productionStatus);
+    } catch (e) {
+      b.status = 'paused';
+      b.productionStatus = 'Pausado: ' + e.message;
+      genProgress.end(false, b.productionStatus);
+      await saveProduction(b).catch(() => {});
+      if (!e.alerted) notifyError(e.message);
+    } finally {
+      clearInterval(leaseTimer);
+      await studioClient.rpc('frame_release_production', { p_id: b.id, p_token: leaseToken });
+      delete b.leaseToken;
+      productionBusy = false;
+      activeBatch = null;
+      updateTest();
+      renderBatches();
+    }
+  });
+}
+let pricedBatch = null,
+  pricedSignature = '';
+function estimateInput(b, source) {
+  return {
+    mode: b.mode,
+    modelId: b.modelId,
+    mediaId: source.mediaId,
+    frameMediaId: source.frameMediaId || source.originalFrameId,
+    frameJob: source.frameJob?.status === 'completed' ? source.frameJob : undefined,
+    duration: source.out || b.duration,
+    resolution: b.resolution,
+    ratio: b.ratio,
+    cast: b.cast,
+    target: b.target,
+    directPrompt: b.directPrompt,
+    framePrompt: b.framePrompt,
+    multiPrompt: b.multiPrompt,
+    basePrompt: b.basePrompt,
+    outfit: b.outfit,
+    generateAudio: b.generateAudio,
+  };
+}
+async function quoteBatch(b, pendingOnly = false) {
+  let video = 0,
+    image = 0;
+  for (const [index, source] of b.sources.entries()) {
+    const count = b.jobs.filter(
+      (j) => j.sourceIndex === index && (!pendingOnly || !terminalStatuses.includes(j.status)),
+    ).length;
+    if (!count) continue;
+    const quote = await testAPI('estimate', estimateInput(b, source));
+    video += quote.usd * count;
+    if (b.mode === 'frame' && b.frameMethod === 'auto' && !source.frameJob?.requestId) {
+      const q = await testAPI('estimate-frame', {
+        modelId: b.modelId,
+        frameMediaId: source.originalFrameId,
+        editPrompt: b.editPrompt,
+        target: b.target,
+        outfit: b.outfit,
+        ratio: source.frameRatio,
+      });
+      image += q.usd;
+    }
+  }
+  return {
+    estimatedVideoCost: video,
+    estimatedImageCost: image,
+    estimatedCost: video + image,
+    priceSource: 'higgsfield-account',
+    pricedAt: new Date().toISOString(),
+  };
+}
+async function priceCurrentPlan(plan) {
+  const signature = JSON.stringify(plan);
+  if (!pricedBatch || pricedSignature !== signature) {
+    try {
+      pricedBatch = await prepareProduction(plan);
+    } finally {
+      genProgress.hide();
+    }
+    pricedSignature = signature;
+  }
+  $('#test-state').textContent = 'Consultando o preço da sua conta na Higgsfield…';
+  try {
+    Object.assign(pricedBatch, await quoteBatch(pricedBatch));
+    pricedBatch.estimateError = '';
+  } catch (e) {
+    Object.assign(pricedBatch, {
+      estimatedCost: plan.estimatedCost,
+      estimatedVideoCost: plan.estimatedVideoCost,
+      estimatedImageCost: plan.estimatedImageCost,
+      priceSource: 'public-table',
+      estimateError: e.message,
+    });
+  }
+  pricedBatch.productionStatus = 'Preço consultado · aguardando confirmação';
+  await saveProduction(pricedBatch);
+  $('#test-cost').textContent =
+    (pricedBatch.priceSource === 'higgsfield-account'
+      ? 'Estimativa da sua conta Higgsfield: US$ '
+      : 'Preço da conta indisponível. Estimativa pela tabela pública SEM DESCONTO: US$ ') +
+    pricedBatch.estimatedCost.toFixed(3).replace('.', ',') +
+    ' · ' +
+    plan.outputs +
+    ' saída(s). Vídeos: US$ ' +
+    pricedBatch.estimatedVideoCost.toFixed(3).replace('.', ',') +
+    '; quadros: US$ ' +
+    pricedBatch.estimatedImageCost.toFixed(3).replace('.', ',') +
+    '.';
+  $('#test-state').textContent = pricedBatch.estimateError || 'Preço consultado. Nenhuma geração foi enviada.';
+  return pricedBatch;
+}
+$('#estimate-account').onclick = async () => {
+  if (productionBusy) return;
+  productionBusy = true;
+  try {
+    const plan = await capturePlan();
+    if (!testConnected) throw Error('Conecte sua chave para consultar o preço da conta.');
+    updateTest();
+    await priceCurrentPlan(plan);
+  } catch (e) {
+    toast(e.message);
+    $('#test-state').textContent = e.message;
+  } finally {
+    productionBusy = false;
+    $('#batch-form').inert = false;
+    $('#estimate-account').disabled = $('#generate-test').disabled = !testConnected;
+    $('#generate-test').textContent = 'Gerar ' + ($('#outputs').value || 1) + ' vídeo(s)';
+  }
+};
+$('#generate-test').onclick = async () => {
+  if (productionBusy) return;
+  let batch;
+  try {
+    if (!testConnected) throw Error('Conecte a Higgsfield.');
+    const plan = await capturePlan();
+    productionBusy = true;
+    updateTest();
+    batch = await priceCurrentPlan(plan);
+    productionBusy = false;
+    $('#batch-form').inert = false;
+    $('#generate-test').disabled = false;
+    if (
+      !(await askConfirm(
+        'Gerar ' +
+          batch.outputs +
+          ' vídeo(s) na Higgsfield?\n' +
+          (batch.priceSource === 'higgsfield-account'
+            ? 'Estimativa da sua conta: US$ '
+            : 'A consulta da conta falhou. Usar estimativa da tabela pública, SEM DESCONTO: US$ ') +
+          batch.estimatedCost.toFixed(3).replace('.', ',') +
+          ' (vídeos US$ ' +
+          batch.estimatedVideoCost.toFixed(3).replace('.', ',') +
+          ' + quadros US$ ' +
+          batch.estimatedImageCost.toFixed(3).replace('.', ',') +
+          ').\nAs fotos e vídeos serão compartilhados com o provedor. Mantenha esta aba aberta.',
+      ))
+    )
+      return;
+    pricedBatch = null;
+    pricedSignature = '';
+    view('batches');
+    await runProduction(batch);
+  } catch (e) {
+    productionBusy = false;
+    $('#batch-form').inert = false;
+    toast(e.message);
+    $('#test-state').textContent = e.message;
+  } finally {
+    if (!productionBusy) {
+      if (batch && batch.jobs && batch.jobs.length && batch.jobs.every((j) => j.status === 'completed')) {
+        files = [];
+        try {
+          selectedFiles.clear();
+        } catch (e) {}
+        renderFiles();
+      }
+      updateTest();
+    }
+  }
+};
+window.renderProductionBatch = (b, card) => {
+  if (!b.jobs?.length) {
+    if (b.status === 'uploading') {
+      card.append(
+        el(
+          'p',
+          'O envio dos arquivos não terminou. Reabra o estúdio e selecione os arquivos para preparar um novo lote.',
+        ),
+      );
+      return;
+    }
+    if (b.status === 'draft') {
+      const use = el('button', 'Usar configuração no estúdio', 'secondary');
+      use.onclick = () => {
+        setMode(b.mode);
+        $('#model').value = b.modelId || '';
+        $('#outputs').value = b.outputs;
+        $('#duration').value = b.duration === 0 ? 0 : Math.min(15, Number(b.duration) || 15);
+        $('#resolution').value = b.resolution;
+        $('#ratio').value = b.ratio;
+        $('#prompt-direct').value = b.directPrompt || b.prompts?.direct || '';
+        $('#prompt-frame').value = b.framePrompt || b.prompts?.frame || defaultFramePrompt;
+        $('#prompt-multi').value = b.multiPrompt || defaultMultiPrompt;
+        $('#prompt-base').value = b.basePrompt || b.prompts?.base || '';
+        $('#frame-edit-prompt').value = b.editPrompt || defaultImagePrompt;
+        $('#target-person').value = b.target || 'the main person';
+        if (b.cast?.length) {
+          castRows = b.cast.map((x) => ({ ...x }));
+          renderCast();
+        }
+        view('studio');
+        updateTest();
+        toast('Configuração carregada. Confira e selecione os arquivos de origem.');
+      };
+      card.append(use);
+    }
+    return;
+  }
+  const completed = b.jobs.filter((j) => j.status === 'completed').length,
+    progress = el('progress');
+  progress.max = b.jobs.length;
+  progress.value = completed;
+  if (activeBatch?.id === b.id) {
+    const live = setInterval(() => {
+      if (!progress.isConnected) {
+        clearInterval(live);
+        return;
+      }
+      const c = window.genProgress.current();
+      if (c !== null) progress.value = Math.max(completed, (c / 100) * b.jobs.length);
+    }, 500);
+  }
+  const actions = el('div', null, 'row-actions');
+  if (activeBatch?.id === b.id) {
+    const pause = el('button', pauseRequested ? 'Pausa solicitada' : 'Pausar próximos envios', 'secondary');
+    pause.disabled = pauseRequested;
+    pause.onclick = () => {
+      pauseRequested = true;
+      renderBatches();
+    };
+    actions.append(pause);
+  } else if (!b.deleted && b.jobs.some((j) => !terminalStatuses.includes(j.status))) {
+    const resume = el('button', 'Retomar lote', 'primary');
+    resume.disabled = productionBusy;
+    resume.onclick = async () => {
+      try {
+        if (!testConnected) throw Error('Conecte a Higgsfield para retomar.');
+        let quote;
+        try {
+          quote = await quoteBatch(b, true);
+        } catch {
+          const rate = RATES[b.resolution];
+          let estimatedCost = 0;
+          for (const [index, source] of b.sources.entries()) {
+            const count = b.jobs.filter((j) => j.sourceIndex === index && !terminalStatuses.includes(j.status)).length;
+            estimatedCost += count * (Math.ceil(source.duration) + (source.out || b.duration)) * rate;
+            if (count && b.mode === 'frame' && b.frameMethod === 'auto' && !source.frameJob?.requestId)
+              estimatedCost += 0.04;
+          }
+          quote = { estimatedCost, priceSource: 'public-table' };
+        }
+        if (
+          !(await askConfirm(
+            'Retomar pedidos pendentes deste lote? Concluídos não serão reenviados. ' +
+              (quote.priceSource === 'public-table'
+                ? 'Consulta da conta indisponível. Estimativa da tabela pública SEM DESCONTO: US$ '
+                : 'Estimativa da sua conta para os pendentes: US$ ') +
+              quote.estimatedCost.toFixed(3).replace('.', ',') +
+              '.',
+          ))
+        )
+          return;
+        const r = await studioClient.from('frame_library').select('*').eq('id', b.id).single();
+        if (r.error || r.data.deleted) throw Error('Lote indisponível.');
+        await runProduction({ ...r.data.data, id: b.id, kind: 'batch', created: r.data.created_at, deleted: false });
+      } catch (e) {
+        toast(e.message);
+      }
+    };
+    actions.append(resume);
+  }
+  card.append(progress, el('p', completed + ' de ' + b.jobs.length + ' concluídos'), actions);
+  b.jobs.forEach((j, i) => {
+    if (!j.videoUrl) {
+      if (j.error) card.append(el('p', 'Saída ' + (i + 1) + ': ' + j.error));
+      return;
+    }
+    const d = el('details'),
+      v = el('video'),
+      a = el('button', 'Baixar MP4', 'primary');
+    v.controls = true;
+    v.preload = 'none';
+    v.src = j.videoUrl;
+    a.type = 'button';
+    a.onclick = async () => {
+      a.disabled = true;
+      try {
+        if (j.videoPath) {
+          const link = el('a');
+          link.href = await storageSignedUrl(j.videoPath, 300, 'frame-studio-' + (i + 1) + '.mp4');
+          link.download = 'frame-studio-' + (i + 1) + '.mp4';
+          document.body.append(link);
+          link.click();
+          link.remove();
+        } else {
+          await archiveJob(j);
+          await saveProduction(b);
+          if (!j.downloadUrl) throw Error(j.archiveError || 'Não foi possível preparar o download.');
+          const link = el('a');
+          link.href = j.downloadUrl;
+          document.body.append(link);
+          link.click();
+          link.remove();
+        }
+      } catch (e) {
+        toast(e.message);
+      } finally {
+        a.disabled = false;
+      }
+    };
+    if (j.videoPath)
+      storageSignedUrl(j.videoPath, 3600)
+        .then((u) => {
+          v.src = u;
+        })
+        .catch(() => {});
+    const original = el('a', 'Abrir original ↗');
+    original.href = j.videoUrl || '#';
+    original.target = '_blank';
+    original.rel = 'noopener';
+    if (j.videoPath)
+      original.onclick = async (ev) => {
+        ev.preventDefault();
+        const w = window.open('about:blank', '_blank');
+        try {
+          const u = await storageSignedUrl(j.videoPath, 3600);
+          if (w) w.location.href = u;
+          else window.location.href = u;
+        } catch (e) {
+          if (w) w.close();
+          toast(e.message || 'Não foi possível abrir o vídeo.');
+        }
+      };
+    d.append(original);
+    d.append(el('summary', 'Vídeo ' + (i + 1) + ' · ' + b.sources[j.sourceIndex].name), v, a);
+    card.append(d);
+  });
+};
+$('#batch-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const plan = await capturePlan();
+    await studioApi('POST', {
+      kind: 'batch',
+      data: {
+        ...plan,
+        status: 'draft',
+        productionStatus: 'Rascunho · configurações salvas',
+        prompt: plan[plan.mode + 'Prompt'],
+      },
+    });
+    await load();
+    view('batches');
+    toast('Rascunho salvo. Use Gerar vídeos no estúdio para enviar.');
+  } catch (e) {
+    toast(e.message);
+  }
+};
+$('#hf-connect-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const raw = $('#hf-key-id').value.trim();
+  if (!/^[-a-zA-Z0-9_]+:[^\s:]+$/.test(raw))
+    return ($('#hf-feedback').textContent = 'Cole a chave completa ID:Secret.');
+  $('#hf-connect').disabled = true;
+  try {
+    await testAPI('connect', { credentials: raw, save: true });
+    sessionHFKey = '';
+    testConnected = true;
+    $('#hf-feedback').textContent = 'Chave válida e salva com proteção na sua conta. Nenhuma geração enviada.';
+    $('#hf-disconnect').hidden = false;
+    await checkConnection();
+  } catch (e) {
+    $('#hf-feedback').textContent = e.message;
+  } finally {
+    $('#hf-key-id').value = '';
+    $('#hf-connect').disabled = false;
+  }
+};
+$('#hf-disconnect').onclick = async () => {
+  if (!(await askConfirm('Remover a chave Higgsfield salva da sua conta? Próximos envios serão pausados.'))) return;
+  try {
+    await testAPI('disconnect', {});
+    pauseRequested = true;
+    sessionHFKey = '';
+    testConnected = false;
+    $('#hf-disconnect').hidden = true;
+    $('#hf-feedback').textContent = 'Chave removida da sua conta.';
+    await checkConnection();
+  } catch (e) {
+    toast(e.message);
+  }
+};
+window.addEventListener('studio-models-update', () => {
+  renderCast();
+  updateTest();
+});
+window.addEventListener('studio-test-update', updateTest);
+window.addEventListener('studio-authenticated', checkConnection);
+window.addEventListener('studio-signed-out', () => {
+  pauseRequested = true;
+  sessionHFKey = '';
+  testConnected = false;
+  reviewedFrame = null;
+  castRows = [{ modelId: '', target: '' }];
+  $('#frame-preview').replaceChildren();
+  $('#production-status').textContent = '';
+  $('#test-state').textContent = 'Entre na sua conta para continuar.';
+});
+document.querySelectorAll('.flow').forEach((b) => b.addEventListener('click', updateTest));
+[
+  'trim-on',
+  'trim-start',
+  'trim-length',
+  'model',
+  'resolution',
+  'duration',
+  'ratio',
+  'outputs',
+  'edited-frame',
+  'target-person',
+  'frame-edit-prompt',
+  'prompt-direct',
+  'prompt-frame',
+  'prompt-base',
+  'prompt-multi',
+].forEach((id) => $('#' + id).addEventListener('change', updateTest));
+new MutationObserver(updateTest).observe($('#file-list'), { childList: true });
+$('#prompt-frame').value = defaultFramePrompt;
+$('#prompt-multi').value = defaultMultiPrompt;
+$('#frame-edit-prompt').value = defaultImagePrompt;
+renderCast();
+studioClient.auth.getSession().then(({ data }) => {
+  if (data.session) checkConnection();
+});
+$('#trim-on').addEventListener('change', () => {
+  $('#trim-start').disabled = $('#trim-length').disabled = !$('#trim-on').checked;
+});
+['trim-start', 'trim-length', 'outputs'].forEach((id) => $('#' + id).addEventListener('input', updateTest));

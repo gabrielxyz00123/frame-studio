@@ -46,8 +46,7 @@
   function paintBars(){
     if(!running||typeof activeBatch==='undefined'||!activeBatch)return;
     var b=activeBatch;
-    var cards=[].slice.call(document.querySelectorAll('#batch-list .batch-card'));
-    var card=cards.find(function(c){return [].slice.call(c.querySelectorAll('button')).some(function(x){return /Paus/.test(x.textContent);});});
+    var card=[].slice.call(document.querySelectorAll('#batch-list .batch-card')).find(function(c){return c.dataset.batchId===b.id;});
     if(!card)return;
     var box=card.querySelector('.pbars');
     if(!box){

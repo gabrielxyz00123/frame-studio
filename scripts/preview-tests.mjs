@@ -18,7 +18,7 @@ createServer(async (req, res) => {
     const text = ['.html', '.js', '.mjs', '.css', '.json'].includes(extname(path));
     let body = text ? await readFile(path, 'utf8') : await readFile(path); /* binários (modelo do detector de rosto) sem conversão */
     if (extname(path) === '.html') body = body.replace('vendor/supabase-js-2.102.0.js', '/__fixture.js');
-    if (extname(path) === '.css') body = body.replace(/^@import[^;]+;/, '');
+    if (extname(path) === '.css') body = body.replace(/^@import[^\n]*\n/, ''); /* linha inteira: a URL das fontes tem ';' dentro */
     res.setHeader('Content-Type', { '.mjs': 'text/javascript', '.js': 'text/javascript', '.html': 'text/html; charset=utf-8', '.css': 'text/css' }[extname(path)] || 'text/plain');
     if (!url.searchParams.has('sem-cabecalhos')) for (const h of vercelHeaders) res.setHeader(h.key, h.value);
     res.setHeader('Cache-Control', 'no-store'); res.end(body);

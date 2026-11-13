@@ -224,7 +224,7 @@
   };
 
   /* ---------- Lotes: reenviar falhas, duplicar, gastos e liberar espaço ---------- */
-  var FAIL=['failed','nsfw','canceled'],RATE={'480p':.05,'720p':.10,'1080p':.20};
+  var FAIL=['failed','nsfw','canceled'],RATE=window.FS_RATES;
   (function(){var st=document.createElement('style');st.textContent='#spend-box{margin:10px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);font-size:12px;color:var(--c3)}#spend-box b{color:var(--c4)}.lot-extra{flex-wrap:wrap;margin-top:10px}.lot-extra button{font-size:12px}';document.head.append(st);})();
   function usd(n){return 'US$ '+n.toFixed(2).replace('.',',');}
   function batchCost(b){
@@ -484,8 +484,8 @@
       if(h&&!h.querySelector('.lot-rename')){
         if(names[b.id])h.prepend(mk('strong',names[b.id],'lot-name'));
         var r=mk('button',names[b.id]?'Renomear':'Dar nome','secondary lot-rename');r.type='button';
-        r.onclick=function(){
-          var n=window.prompt('Nome do lote (deixe vazio para remover):',names[b.id]||'');
+        r.onclick=async function(){
+          var n=await askText('Nome do lote (deixe vazio para remover)',names[b.id]||'','Salvar',{maxLength:60});
           if(n===null)return;n=n.trim().slice(0,60);
           if(n)names[b.id]=n;else delete names[b.id];
           lsSet('fs-names',names);renderBatches();

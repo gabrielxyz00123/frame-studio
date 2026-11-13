@@ -7,7 +7,7 @@
   function ls(k,d){try{var v=JSON.parse(localStorage.getItem(k));return v==null?d:v;}catch(e){return d;}}
   function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
   var dl=ls('fs-dl',{}),hid=ls('fs-hidden',{}),presets=ls('fs-presets',{}),showHidden=false;
-  var TERM=['completed','failed','nsfw','canceled'],BAD=['failed','nsfw','canceled'],RATE={'480p':.05,'720p':.10,'1080p':.20};
+  var TERM=['completed','failed','nsfw','canceled'],BAD=['failed','nsfw','canceled'],RATE=window.FS_RATES;
 
   var css=document.createElement('style');
   css.textContent='.lib-card[data-gone="1"]{display:none}.lib-dlbadge{font-size:11px;color:var(--c4)}.lib-bar select#lib-sort{min-width:150px}'
@@ -124,8 +124,8 @@
       say('Configuração aplicada.');
     };
     var sv=mk('button','Salvar a atual','secondary');sv.type='button';
-    sv.onclick=function(){
-      var n=window.prompt('Nome da configuração (ex.: Dança 480p):','');if(!n)return;n=n.trim().slice(0,40);if(!n)return;
+    sv.onclick=async function(){
+      var n=await askText('Nome da configuração','','Salvar',{maxLength:40,placeholder:'ex.: Dança 480p'});if(!n)return;n=n.trim().slice(0,40);if(!n)return;
       var p={};FIELDS.forEach(function(f){var el=q(f);if(el)p[f]=el.value;});
       var t=q('#trim-on');if(t)p.trim=t.checked;var c=q('#conc');if(c)p.conc=c.value;
       presets[n]=p;lsSet('fs-presets',presets);fillPresets(sel);sel.value=n;say('Configuração salva.');

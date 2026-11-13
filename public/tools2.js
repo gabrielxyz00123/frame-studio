@@ -4,7 +4,7 @@
   function q(s){return document.querySelector(s);}
   function mk(t,x,c){var e=document.createElement(t);if(x!=null)e.textContent=x;if(c)e.className=c;return e;}
   function say(m){try{toast(m);}catch(e){}}
-  var RATE={'480p':.05,'720p':.10,'1080p':.20};
+  var RATE=window.FS_RATES;
   var css=document.createElement('style');
   css.textContent='#crop-ov{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;color:#fff;font-size:13px}#crop-ov canvas{max-width:92vw;touch-action:none;cursor:move;border-radius:6px}#crop-ov .row{display:flex;gap:10px;align-items:center}#crop-ov input[type=range]{width:200px}.lib-share{font-size:12px;padding:5px 8px}';
   document.head.append(css);
@@ -47,7 +47,7 @@
       var j=await r.json().catch(function(){return {};});
       if(!r.ok||!j.url)throw Error(j.error||(j.missing?'Arquivo não encontrado.':'Não foi possível criar o link.'));
       try{await navigator.clipboard.writeText(j.url);say('Link copiado. Vale por 7 dias, ou até você revogar.');}
-      catch(e){window.prompt('Copie o link (vale por 7 dias, ou até você revogar):',j.url);}
+      catch(e){await askText('Copie o link (vale por 7 dias, ou até você revogar)',j.url,'',{readOnly:true});}
     }catch(e){say(e.message||'Não foi possível criar o link.');}
     finally{btn.disabled=false;}
   }
